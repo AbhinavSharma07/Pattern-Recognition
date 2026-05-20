@@ -1,13 +1,8 @@
 from typing import List, Dict, Any
 from core.parser import analyze_source_code
 
-# Try importing from the agents package first, fallback to root if they are still there
-try:
-    from agents.refactor_agent import run_refactor_agent
-    from agents.test_agent import run_test_agent
-except ModuleNotFoundError:
-    from refactor_agent import run_refactor_agent
-    from test_agent import run_test_agent
+from agents.refactor_agent import run_refactor_agent
+from agents.test_agent import run_test_agent
 
 def process_codebase(source_code: str, file_name: str = "temp.py") -> List[Dict[str, Any]]:
     """

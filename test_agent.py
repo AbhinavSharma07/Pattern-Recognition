@@ -11,7 +11,7 @@ def get_test_agent():
     structured_llm = llm.with_structured_output(TestCaseProposal)
 
     prompt = ChatPromptTemplate.from_messages([
-        ("system", "You are an expert Python QA engineer. Given a refactored Python function, write a robust pytest function to test it. Consider edge cases, valid inputs, and potential errors. Return the pytest code strictly according to the requested schema. Ensure the code is ready to execute."),
+        ("system", "You are an expert Python QA engineer. Given a refactored Python function, write a robust pytest function to test it. Consider edge cases, valid inputs, and potential errors. Return the pytest code strictly according to the requested schema. Ensure the code is ready to execute.\n\nIMPORTANT: Assume the refactored function is saved in a file named `target_module.py`. You MUST import the target function from it at the top of your test code (e.g., `from target_module import your_function`)."),
         ("user", "Target Function: {original_function_name}\n\nRefactored Code:\n{refactored_code}\n\nExplanation of changes: {explanation}")
     ])
 
