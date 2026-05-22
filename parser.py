@@ -3,8 +3,9 @@ from typing import List
 from .schemas import CodeSmell
 
 class AntiPatternVisitor(ast.NodeVisitor):
-    def __init__(self, file_name: str):
+    def __init__(self, file_name: str, source_code: str):
         self.file_name = file_name
+        self.source_code = source_code
         self.smells: List[CodeSmell] = []
 
     def visit_FunctionDef(self, node: ast.FunctionDef):
@@ -44,8 +45,8 @@ class AntiPatternVisitor(ast.NodeVisitor):
     def _record_smell(self, node: ast.AST, issue: str):
         """Helper method to extract the code and save the CodeSmell."""
         try:
-            # ast.unparse requires Python 3.9+ and converts the node back to a string
-            code_snippet = ast.unparse(node)
+            # Extract the exact string from the original source file to allow string replacement later
+            code_snippet = ast.get_source_segment(self.source_code, node) or ast.unparse(node)
         except Exception:
             code_snippet = "# Could not extract raw code."
         
@@ -66,6 +67,6 @@ def analyze_source_code(source_code: str, file_name: str = "temp.py") -> List[Co
     Parses the source code string and returns a list of detected CodeSmells.
     """
     tree = ast.parse(source_code)
-    visitor = AntiPatternVisitor(file_name)
+    visitor = AntiPatternVisitor(file_name, source_code)
     visitor.visit(tree)
     return visitor.smells
