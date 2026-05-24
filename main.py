@@ -1,6 +1,6 @@
 import typer
 from pathlib import Path
-from core.parser import analyze_source_code
+from core.parser import analyze_source_code, load_config
 from agents.orchestrator import process_codebase
 from dotenv import load_dotenv
 
@@ -10,12 +10,16 @@ load_dotenv()
 app = typer.Typer(help="Multi-Agent AST Pattern Analyzer & Auto-Refactorer")
 
 @app.command()
-def scan(path: Path = typer.Argument(..., help="Path to the Python file or directory to scan")):
+def scan(
+    path: Path = typer.Argument(..., help="Path to the Python file or directory to scan"),
+    config: Path = typer.Option("config.json", "--config", "-c", help="Path to a custom JSON configuration file")
+):
     """Scans Python file(s) for architectural anti-patterns without modifying them."""
     if not path.exists():
         typer.secho(f"Error: Path '{path}' does not exist.", fg=typer.colors.RED)
         raise typer.Exit(code=1)
     
+    custom_config = load_config(str(config))
     files_to_scan = [path] if path.is_file() else list(path.rglob("*.py"))
     total_smells = 0
 
@@ -24,7 +28,7 @@ def scan(path: Path = typer.Argument(..., help="Path to the Python file or direc
             continue # Skip hidden directories like .venv or .git
             
         source_code = file_path.read_text(encoding="utf-8")
-        smells = analyze_source_code(source_code, str(file_path))
+        smells = analyze_source_code(source_code, str(file_path), custom_config)
         
         if smells:
             total_smells += len(smells)
@@ -38,7 +42,10 @@ def scan(path: Path = typer.Argument(..., help="Path to the Python file or direc
 @app.command()
 def fix(
     file_path: Path = typer.Argument(..., help="Path to the Python file to fix"),
-    report: bool = typer.Option(False, "--report", help="Generate a Markdown report of the changes")
+    report: bool = typer.Option(False, "--report", help="Generate a Markdown report of the changes"),
+    apply: bool = typer.Option(False, "--apply", help="Overwrite the original file with the validated refactors"),
+    docker: bool = typer.Option(False, "--docker", help="Run validation tests securely inside a Docker container"),
+    config: Path = typer.Option("config.json", "--config", "-c", help="Path to a custom JSON configuration file")
 ):
     """Autonomously refactors code smells in a file and validates with generated tests."""
     if not file_path.exists() or not file_path.is_file():
@@ -48,12 +55,35 @@ def fix(
     source_code = file_path.read_text(encoding="utf-8")
     typer.secho(f"🚀 Starting multi-agent refactoring on {file_path.name}...\n", fg=typer.colors.CYAN)
     
-    results = process_codebase(source_code, file_path.name)
+    custom_config = load_config(str(config))
+    results = process_codebase(source_code, file_path.name, use_docker=docker, config=custom_config)
     
     if results and report:
         report_path = file_path.with_name(f"{file_path.stem}_refactor_report.md")
         generate_markdown_report(results, report_path)
         typer.secho(f"\n📄 Markdown report generated and saved to: {report_path}", fg=typer.colors.GREEN)
+
+    if apply and results:
+        new_source = source_code
+        changes_applied = 0
+        new_imports = set()
+
+        for res in results:
+            if res.get("validated", False):
+                smell = res["smell"]
+                refactor = res["refactor"]
+                if smell.raw_code in new_source:
+                    new_source = new_source.replace(smell.raw_code, refactor.refactored_code)
+                    changes_applied += 1
+                    for imp in refactor.required_imports:
+                        if imp not in new_source:
+                            new_imports.add(imp)
+        
+        if changes_applied > 0:
+            if new_imports:
+                new_source = "\n".join(new_imports) + "\n\n" + new_source
+            file_path.write_text(new_source, encoding="utf-8")
+            typer.secho(f"\n✅ Successfully applied {changes_applied} validated fix(es) directly to {file_path.name}!", fg=typer.colors.GREEN)
 
 def generate_markdown_report(results: list, output_path: Path):
     """Generates a comprehensive Markdown report of the AI's actions."""

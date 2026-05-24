@@ -1,29 +1,50 @@
 import ast
-from typing import List
+import json
+from typing import List, Dict, Any
+from pathlib import Path
 from .schemas import CodeSmell
 
+DEFAULT_CONFIG = {
+    "max_arguments": 5,
+    "max_nesting_depth": 3,
+    "check_bare_except": True
+}
+
+def load_config(config_path: str = "config.json") -> Dict[str, Any]:
+    path = Path(config_path)
+    if path.exists() and path.is_file():
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Error loading config {config_path}: {e}. Using defaults.")
+    return DEFAULT_CONFIG
+
 class AntiPatternVisitor(ast.NodeVisitor):
-    def __init__(self, file_name: str, source_code: str):
+    def __init__(self, file_name: str, source_code: str, config: Dict[str, Any] = None):
         self.file_name = file_name
         self.source_code = source_code
         self.smells: List[CodeSmell] = []
+        self.config = config or DEFAULT_CONFIG
 
     def visit_FunctionDef(self, node: ast.FunctionDef):
-        # Pattern 1: Check for excessive arguments (> 5)
-        if len(node.args.args) > 5:
-            self._record_smell(node, "Excessive Arguments (> 5)")
+        # Pattern 1: Check for excessive arguments
+        max_args = self.config.get("max_arguments", 5)
+        if len(node.args.args) > max_args:
+            self._record_smell(node, f"Excessive Arguments (> {max_args})")
 
-        # Pattern 2: Check for complex control flow nesting (> 3)
+        # Pattern 2: Check for complex control flow nesting
+        max_nesting = self.config.get("max_nesting_depth", 3)
         nesting_depth = self._calculate_max_nesting(node.body)
-        if nesting_depth > 3:
-            self._record_smell(node, f"Deep Nesting (depth: {nesting_depth})")
+        if nesting_depth > max_nesting:
+            self._record_smell(node, f"Deep Nesting (depth: {nesting_depth}, max allowed: {max_nesting})")
 
         # Continue traversing down the tree
         self.generic_visit(node)
 
     def visit_ExceptHandler(self, node: ast.ExceptHandler):
         # Pattern 3: Check for bare except clauses
-        if node.type is None:
+        if self.config.get("check_bare_except", True) and node.type is None:
             self._record_smell(node, "Bare 'except' clause detected")
         
         self.generic_visit(node)
@@ -61,12 +82,12 @@ class AntiPatternVisitor(ast.NodeVisitor):
         )
         self.smells.append(smell)
 
-def analyze_source_code(source_code: str, file_name: str = "temp.py") -> List[CodeSmell]:
+def analyze_source_code(source_code: str, file_name: str = "temp.py", config: Dict[str, Any] = None) -> List[CodeSmell]:
     """
     Entry point for the static analysis engine.
     Parses the source code string and returns a list of detected CodeSmells.
     """
     tree = ast.parse(source_code)
-    visitor = AntiPatternVisitor(file_name, source_code)
+    visitor = AntiPatternVisitor(file_name, source_code, config)
     visitor.visit(tree)
     return visitor.smells

@@ -1,0 +1,5 @@
+{
+    "max_arguments": 5,
+    "max_nesting_depth": 3,
+    "check_bare_except": true
+}
