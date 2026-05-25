@@ -1,5 +1,7 @@
 {
     "max_arguments": 5,
     "max_nesting_depth": 3,
-    "check_bare_except": true
+    "check_bare_except": true,
+    "check_generic_exception": true,
+    "max_list_comp_ifs": 2
 }

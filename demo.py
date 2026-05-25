@@ -13,6 +13,15 @@ def process_user_data(a, b, c, d, e, f, g):
                 if d == 5:
                     print(e, f, g)
                     c += 1
+
+    # Anti-Pattern: Generic Exception
+    try:
+        print("Doing something risky")
+    except Exception as e:
+        print(f"Error: {e}")
+        
+    # Anti-Pattern: Complex List Comprehension
+    valid_data = [x for x in range(100) if x % 2 == 0 if x % 3 == 0 if x % 5 == 0]
 """
 
 if __name__ == "__main__":

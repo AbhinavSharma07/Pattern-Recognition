@@ -7,7 +7,9 @@ from .schemas import CodeSmell
 DEFAULT_CONFIG = {
     "max_arguments": 5,
     "max_nesting_depth": 3,
-    "check_bare_except": True
+    "check_bare_except": True,
+    "check_generic_exception": True,
+    "max_list_comp_ifs": 2
 }
 
 def load_config(config_path: str = "config.json") -> Dict[str, Any]:
@@ -47,6 +49,20 @@ class AntiPatternVisitor(ast.NodeVisitor):
         if self.config.get("check_bare_except", True) and node.type is None:
             self._record_smell(node, "Bare 'except' clause detected")
         
+        # Pattern 4: Check for generic 'except Exception'
+        if self.config.get("check_generic_exception", True) and node.type is not None:
+            if isinstance(node.type, ast.Name) and node.type.id == 'Exception':
+                self._record_smell(node, "Catching generic 'Exception' is an anti-pattern")
+        
+        self.generic_visit(node)
+
+    def visit_ListComp(self, node: ast.ListComp):
+        # Pattern 5: Check for complex list comprehensions (too many 'if' clauses)
+        max_ifs = self.config.get("max_list_comp_ifs", 2)
+        total_ifs = sum(len(generator.ifs) for generator in node.generators)
+        if total_ifs > max_ifs:
+            self._record_smell(node, f"List comprehension is too complex (> {max_ifs} if clauses)")
+            
         self.generic_visit(node)
 
     def _calculate_max_nesting(self, nodes: List[ast.stmt], current_depth: int = 0) -> int:
