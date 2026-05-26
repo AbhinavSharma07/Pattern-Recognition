@@ -1,14 +1,21 @@
 from langchain_openai import ChatOpenAI
+from langchain_community.chat_models import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate
 from core.schemas import CodeSmell, RefactorProposal
+from typing import Dict, Any
 
-def get_refactor_agent():
+def get_refactor_agent(config: Dict[str, Any] = None):
     """
     Configures and returns the LangChain refactoring agent.
     """
-    # Initialize the LLM. 
-    # gpt-4o-mini is cost-effective and excellent at structured outputs.
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.1)
+    config = config or {}
+    llm_config = config.get("llm_backend", {"provider": "openai", "model": "gpt-4o-mini"})
+    
+    if llm_config.get("provider") == "ollama":
+        llm = ChatOllama(model=llm_config.get("model", "llama3"), temperature=0.1)
+    else:
+        # Initialize the default OpenAI LLM
+        llm = ChatOpenAI(model=llm_config.get("model", "gpt-4o-mini"), temperature=0.1)
     
     # Enforce the structured output using our Pydantic model
     structured_llm = llm.with_structured_output(RefactorProposal)
@@ -22,12 +29,12 @@ def get_refactor_agent():
     # Chain the prompt and the structured LLM together
     return prompt | structured_llm
 
-def run_refactor_agent(smell: CodeSmell, feedback: str = None) -> RefactorProposal:
+def run_refactor_agent(smell: CodeSmell, feedback: str = None, config: Dict[str, Any] = None) -> RefactorProposal:
     """
     Executes the refactoring agent on a given CodeSmell.
     If feedback from a failed test is provided, it attempts to fix the errors.
     """
-    agent = get_refactor_agent()
+    agent = get_refactor_agent(config)
     
     inputs = smell.model_dump()
     if feedback:

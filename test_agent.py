@@ -1,12 +1,20 @@
 from langchain_openai import ChatOpenAI
+from langchain_community.chat_models import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate
 from core.schemas import RefactorProposal, TestCaseProposal
+from typing import Dict, Any
 
-def get_test_agent():
+def get_test_agent(config: Dict[str, Any] = None):
     """
     Configures and returns the LangChain test generation agent.
     """
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.1)
+    config = config or {}
+    llm_config = config.get("llm_backend", {"provider": "openai", "model": "gpt-4o-mini"})
+    
+    if llm_config.get("provider") == "ollama":
+        llm = ChatOllama(model=llm_config.get("model", "llama3"), temperature=0.1)
+    else:
+        llm = ChatOpenAI(model=llm_config.get("model", "gpt-4o-mini"), temperature=0.1)
     
     structured_llm = llm.with_structured_output(TestCaseProposal)
 
@@ -17,11 +25,11 @@ def get_test_agent():
 
     return prompt | structured_llm
 
-def run_test_agent(proposal: RefactorProposal) -> TestCaseProposal:
+def run_test_agent(proposal: RefactorProposal, config: Dict[str, Any] = None) -> TestCaseProposal:
     """
     Executes the test generation agent on a given RefactorProposal.
     """
-    agent = get_test_agent()
+    agent = get_test_agent(config)
     
     # We pass the refactored proposal into the prompt to generate corresponding tests
     response = agent.invoke(proposal.model_dump())

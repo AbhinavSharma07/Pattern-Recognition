@@ -4,6 +4,7 @@ from core.sandbox import execute_tests
 
 from agents.refactor_agent import run_refactor_agent
 from agents.test_agent import run_test_agent
+from agents.reviewer_agent import run_reviewer_agent
 
 def process_codebase(source_code: str, file_name: str = "temp.py", use_docker: bool = False, config: Dict[str, Any] = None) -> List[Dict[str, Any]]:
     """
@@ -32,13 +33,22 @@ def process_codebase(source_code: str, file_name: str = "temp.py", use_docker: b
 
             # Step 1: Refactor the bad code
             print("[*] Refactor Agent is rewriting the code...")
-            refactor_proposal = run_refactor_agent(smell, feedback)
+            refactor_proposal = run_refactor_agent(smell, feedback, config)
             print(f"[+] Refactoring complete. Explanation: {refactor_proposal.explanation}")
             
             # Step 2: Generate Pytest unit tests for the rewritten code
             print("[*] Test Agent is generating unit tests for the new code...")
-            test_proposal = run_test_agent(refactor_proposal)
+            test_proposal = run_test_agent(refactor_proposal, config)
             
+            # Step 2.5: Reviewer Agent checks the work
+            print("[*] Reviewer Agent is verifying the code and tests...")
+            review = run_reviewer_agent(smell, refactor_proposal, test_proposal, config)
+            if not review.approved:
+                print(f"[-] Reviewer REJECTED: {review.feedback}. Retrying...")
+                feedback = f"REVIEWER FEEDBACK: {review.feedback}"
+                continue
+            print(f"[+] Reviewer APPROVED: {review.feedback}")
+
             # Step 3: Sandbox Validation
             print(f"[*] Running tests in isolated sandbox (Docker: {use_docker})...")
             sandbox_result = execute_tests(refactor_proposal.refactored_code, test_proposal.pytest_code, use_docker)
