@@ -4,6 +4,26 @@ from core.parser import analyze_source_code, load_config
 from agents.orchestrator import process_codebase
 from dotenv import load_dotenv
 
+try:
+    import libcst as cst
+    HAS_LIBCST = True
+except ImportError:
+    HAS_LIBCST = False
+
+class RefactorTransformer(cst.CSTTransformer):
+    """Safely replaces AST nodes with AI-refactored code while preserving formatting."""
+    def __init__(self, target_name: str, new_code: str):
+        self.target_name = target_name
+        try:
+            self.replacement_node = cst.parse_statement(new_code)
+        except Exception:
+            self.replacement_node = None
+
+    def leave_FunctionDef(self, original_node, updated_node):
+        if original_node.name.value == self.target_name and self.replacement_node:
+            return self.replacement_node
+        return updated_node
+
 # Load environment variables (.env) for the API key
 load_dotenv()
 
@@ -78,9 +98,25 @@ def fix(
                 if res.get("validated", False):
                     smell = res["smell"]
                     refactor = res["refactor"]
-                    if smell.raw_code in new_source:
+                    
+                    if HAS_LIBCST:
+                        try:
+                            module = cst.parse_module(new_source)
+                            transformer = RefactorTransformer(smell.target_name, refactor.refactored_code)
+                            modified_module = module.visit(transformer)
+                            
+                            if not module.deep_equals(modified_module):
+                                new_source = modified_module.code
+                                changes_applied += 1
+                            elif smell.raw_code in new_source: # Fallback
+                                new_source = new_source.replace(smell.raw_code, refactor.refactored_code)
+                                changes_applied += 1
+                        except Exception:
+                            pass # Let fallback catch it below
+                    elif smell.raw_code in new_source:
                         new_source = new_source.replace(smell.raw_code, refactor.refactored_code)
                         changes_applied += 1
+                        
                         for imp in refactor.required_imports:
                             if imp not in new_source:
                                 new_imports.add(imp)
