@@ -7,5 +7,13 @@
     "llm_backend": {
         "provider": "openai",
         "model": "gpt-4o-mini"
-    }
+    },
+    "custom_rules": [
+        {
+            "name": "Discouraged 'os.system' call",
+            "type": "Call",
+            "match": "os.system",
+            "enabled": true
+        }
+    ]
 }
