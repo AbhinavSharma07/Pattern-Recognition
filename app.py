@@ -1,5 +1,6 @@
 import streamlit as st
-from core.parser import analyze_source_code, load_config
+import json
+from core.parser import load_config
 from agents.orchestrator import process_codebase
 from dotenv import load_dotenv
 
@@ -13,7 +14,20 @@ st.markdown("Paste your Python code below or upload a file to have the AI agents
 
 # Sidebar settings
 st.sidebar.header("⚙️ Configuration")
-use_docker = st.sidebar.checkbox("Use Docker Sandbox", value=False, help="Requires Docker Desktop to be running.")
+
+# Load config into session state if not already there
+if 'config' not in st.session_state:
+    st.session_state.config = load_config("config.json")
+
+use_docker = st.sidebar.checkbox("Use Docker Sandbox", value=st.session_state.config.get("use_docker", False), help="Requires Docker Desktop to be running.")
+
+# Interactive JSON editor for the config
+with st.sidebar.expander("Edit Configuration JSON", expanded=False):
+    edited_config = st.json_editor(st.session_state.config, height=300)
+    if st.button("Save Config to File"):
+        with open("config.json", "w", encoding="utf-8") as f:
+            json.dump(edited_config, f, indent=4)
+        st.success("Configuration saved!")
 
 code_input = st.text_area("Paste Python Code Here:", height=300)
 uploaded_file = st.file_uploader("Or Upload a .py file", type=["py"])
@@ -27,9 +41,11 @@ if st.button("🚀 Analyze & Refactor", type="primary"):
         st.warning("Please provide some code to analyze.")
     else:
         with st.spinner("Agents are scanning and processing the codebase..."):
-            config = load_config("config.json")
+            # Use the potentially edited config from the session state
+            current_config = edited_config
+            
             # Run the multi-agent pipeline
-            results = process_codebase(code_input, "streamlit_input.py", use_docker, config)
+            results = process_codebase(code_input, "streamlit_input.py", use_docker, current_config)
 
             if not results:
                 st.success("✅ No structural code smells detected. Your code is clean!")
