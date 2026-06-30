@@ -14,6 +14,18 @@
             "type": "Call",
             "match": "os.system",
             "enabled": true
+        },
+        {
+            "name": "Discouraged 'antigravity' import",
+            "type": "Import",
+            "match": "antigravity",
+            "enabled": true
+        },
+        {
+            "name": "Usage of discouraged decorator",
+            "type": "Decorator",
+            "match": "discouraged_decorator",
+            "enabled": true
         }
     ]
 }
