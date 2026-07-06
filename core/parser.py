@@ -78,6 +78,35 @@ class AntiPatternVisitor(ast.NodeVisitor):
                 ))
         self.generic_visit(node)
 
+    def visit_Import(self, node: ast.Import):
+        """Checks for disallowed 'import <module>' statements."""
+        for alias in node.names:
+            module_name = alias.name
+            for rule in self.custom_rules:
+                if rule.get("type") == "disallowed_import" and rule.get("pattern") in module_name:
+                    self.smells.append(CodeSmell(
+                        issue_type=rule.get("message", "Disallowed import"),
+                        target_name=module_name,
+                        raw_code=self._get_node_code(node),
+                        line_number=node.lineno,
+                        file_name=self.file_name
+                    ))
+        self.generic_visit(node)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom):
+        """Checks for disallowed 'from <module> import ...' statements."""
+        module_name = node.module or ""
+        for rule in self.custom_rules:
+            if rule.get("type") == "disallowed_import_from" and rule.get("pattern") in module_name:
+                self.smells.append(CodeSmell(
+                    issue_type=rule.get("message", "Disallowed 'from' import"),
+                    target_name=module_name,
+                    raw_code=self._get_node_code(node),
+                    line_number=node.lineno,
+                    file_name=self.file_name
+                ))
+        self.generic_visit(node)
+
 def analyze_source_code(source_code: str, file_name: str, config: Dict[str, Any]) -> List[CodeSmell]:
     """
     Parses source code into an AST and uses the AntiPatternVisitor to find smells.
