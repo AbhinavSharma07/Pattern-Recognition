@@ -2,6 +2,7 @@ import ast
 import json
 from pathlib import Path
 from typing import List, Dict, Any
+from collections import defaultdict
 from .schemas import CodeSmell
 
 class AntiPatternVisitor(ast.NodeVisitor):
@@ -13,13 +14,20 @@ class AntiPatternVisitor(ast.NodeVisitor):
         self.source_lines = source_code.splitlines()
         self.smells: List[CodeSmell] = []
         self.config = config.get("rules", {})
-        self.custom_rules = self.config.get("custom_rules", [])
+        
+        # Pre-process custom rules into a more efficient structure for lookups
+        self.custom_rules_by_type = defaultdict(list)
+        for rule in self.config.get("custom_rules", []):
+            if "type" in rule and "pattern" in rule:
+                self.custom_rules_by_type[rule["type"]].append(rule)
 
     def _get_node_code(self, node: ast.AST) -> str:
         """Extracts the raw source code for a given AST node."""
-        return ast.get_source_segment(
-            "\n".join(self.source_lines), node
-        )
+        try:
+            return ast.get_source_segment("\n".join(self.source_lines), node)
+        except (TypeError, ValueError):
+            # Fallback for nodes that don't have a direct source segment
+            return "..."
 
     def visit_FunctionDef(self, node: ast.FunctionDef):
         """Checks for long functions and functions with too many arguments."""
@@ -67,8 +75,8 @@ class AntiPatternVisitor(ast.NodeVisitor):
         else:
             func_name = "unknown"
 
-        for rule in self.custom_rules:
-            if rule.get("type") == "disallowed_call" and rule.get("pattern") == func_name:
+        for rule in self.custom_rules_by_type.get("disallowed_call", []):
+            if rule.get("pattern") == func_name:
                 self.smells.append(CodeSmell(
                     issue_type=rule.get("message", "Disallowed function call"),
                     target_name=func_name,
@@ -82,9 +90,9 @@ class AntiPatternVisitor(ast.NodeVisitor):
         """Checks for disallowed 'import <module>' statements."""
         for alias in node.names:
             module_name = alias.name
-            for rule in self.custom_rules:
-                if rule.get("type") == "disallowed_import" and rule.get("pattern") in module_name:
-                    self.smells.append(CodeSmell(
+            for rule in self.custom_rules_by_type.get("disallowed_import", []):
+                if rule.get("pattern") == module_name:
+                    self.smells.append(CodeSmell( 
                         issue_type=rule.get("message", "Disallowed import"),
                         target_name=module_name,
                         raw_code=self._get_node_code(node),
@@ -96,9 +104,9 @@ class AntiPatternVisitor(ast.NodeVisitor):
     def visit_ImportFrom(self, node: ast.ImportFrom):
         """Checks for disallowed 'from <module> import ...' statements."""
         module_name = node.module or ""
-        for rule in self.custom_rules:
-            if rule.get("type") == "disallowed_import_from" and rule.get("pattern") in module_name:
-                self.smells.append(CodeSmell(
+        for rule in self.custom_rules_by_type.get("disallowed_import_from", []):
+            if rule.get("pattern") == module_name:
+                self.smells.append(CodeSmell( 
                     issue_type=rule.get("message", "Disallowed 'from' import"),
                     target_name=module_name,
                     raw_code=self._get_node_code(node),
