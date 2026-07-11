@@ -1,5 +1,8 @@
+import logging
 import typer
+import difflib
 from pathlib import Path
+from typing import List
 from core.parser import analyze_source_code, load_config
 from agents.orchestrator import process_codebase
 from dotenv import load_dotenv
@@ -10,13 +13,16 @@ try:
 except ImportError:
     HAS_LIBCST = False
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
 class RefactorTransformer(cst.CSTTransformer):
     """Safely replaces AST nodes with AI-refactored code while preserving formatting."""
     def __init__(self, target_name: str, new_code: str):
         self.target_name = target_name
         try:
             self.replacement_node = cst.parse_statement(new_code)
-        except Exception:
+        except Exception as e:
+            logging.warning(f"Failed to parse refactored code with libcst: {e}. Will use fallback.", exc_info=True)
             self.replacement_node = None
 
     def leave_FunctionDef(self, original_node, updated_node):
@@ -29,6 +35,18 @@ load_dotenv()
 
 app = typer.Typer(help="Multi-Agent AST Pattern Analyzer & Auto-Refactorer")
 
+def _get_python_files(path: Path) -> List[Path]:
+    """Gathers all Python files from a path, excluding common virtual environments and hidden directories."""
+    if path.is_file():
+        return [path]
+    
+    typer.echo(f"Searching for Python files in {path}...")
+    return [
+        p for p in path.rglob("*.py")
+        if not any(part.startswith('.') or part in ('venv', '.venv', '__pycache__') for part in p.parts)
+    ]
+
+
 @app.command()
 def scan(
     path: Path = typer.Argument(..., help="Path to the Python file or directory to scan"),
@@ -40,13 +58,10 @@ def scan(
         raise typer.Exit(code=1)
     
     custom_config = load_config(str(config))
-    files_to_scan = [path] if path.is_file() else list(path.rglob("*.py"))
+    files_to_scan = _get_python_files(path)
     total_smells = 0
 
     for file_path in files_to_scan:
-        if any(part.startswith(".") for part in file_path.parts):
-            continue # Skip hidden directories like .venv or .git
-            
         source_code = file_path.read_text(encoding="utf-8")
         smells = analyze_source_code(source_code, str(file_path), custom_config)
         
@@ -73,12 +88,9 @@ def fix(
         raise typer.Exit(code=1)
     
     custom_config = load_config(str(config))
-    files_to_fix = [path] if path.is_file() else list(path.rglob("*.py"))
+    files_to_fix = _get_python_files(path)
     
     for file_path in files_to_fix:
-        if any(part.startswith(".") for part in file_path.parts) or "venv" in file_path.parts:
-            continue # Skip hidden directories like .venv or .git
-            
         source_code = file_path.read_text(encoding="utf-8")
         typer.secho(f"\n🚀 Starting multi-agent refactoring on {file_path}...\n", fg=typer.colors.CYAN)
         
@@ -111,7 +123,8 @@ def fix(
                             elif smell.raw_code in new_source: # Fallback
                                 new_source = new_source.replace(smell.raw_code, refactor.refactored_code)
                                 changes_applied += 1
-                        except Exception:
+                        except Exception as e:
+                            logging.warning(f"LibCST transformation failed for {smell.target_name}: {e}", exc_info=True)
                             pass # Let fallback catch it below
                     elif smell.raw_code in new_source:
                         new_source = new_source.replace(smell.raw_code, refactor.refactored_code)
@@ -134,12 +147,10 @@ def generate_markdown_report(results: list, output_path: Path):
         smell, refactor, test, validated = res["smell"], res["refactor"], res["test"], res.get("validated", False)
         status = "✅ VALIDATED" if validated else "❌ FAILED TESTS"
         
-        # Generate a diff of the changes
         diff = difflib.unified_diff(
             smell.raw_code.splitlines(keepends=True),
             refactor.refactored_code.splitlines(keepends=True),
-            fromfile='original',
-            tofile='refactored',
+            fromfile='original', tofile='refactored',
         )
         
         lines.extend([
