@@ -1,14 +1,3 @@
----
-title: Multi-Agent AST Pattern Analyzer & Auto-Refactorer
-emoji: 🤖
-colorFrom: blue
-colorTo: red
-sdk: gradio
-sdk_version: 6.20.0
-app_file: app.py
-pinned: false
----
-
 # Multi-Agent AST Pattern Analyzer & Auto-Refactorer 
   
 An autonomous, end-to-end Python code analysis and refactoring tool that uses Abstract Syntax Trees (AST) and a multi-agent LLM system to detect, refactor, and validate code improvements.
@@ -61,7 +50,6 @@ An autonomous, end-to-end Python code analysis and refactoring tool that uses Ab
     ```
     GROQ_API_KEY="your-groq-api-key-here"
     ```
-    Get a free key at [console.groq.com/keys](https://console.groq.com/keys).
 
     Alternative backends are also supported — set `llm_backend.provider` in
     `config.json` to switch, and provide the matching key:
