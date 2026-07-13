@@ -81,16 +81,28 @@ def process_codebase(source_code: str, file_name: str = "temp.py", use_docker: b
     CACHE_DIR.mkdir(exist_ok=True)
 
     def get_cache_key(smell):
-        return hashlib.sha256(smell.raw_code.encode()).hexdigest()
+        return hashlib.sha256(f"{smell.issue_type}:{smell.raw_code}".encode()).hexdigest()
 
     def get_from_cache(key):
         cache_file = CACHE_DIR / f"{key}.json"
-        if cache_file.exists():
-            return json.loads(cache_file.read_text())
-        return None
+        if not cache_file.exists():
+            return None
+        data = json.loads(cache_file.read_text())
+        return {
+            "smell": CodeSmell(**data["smell"]),
+            "refactor": RefactorProposal(**data["refactor"]),
+            "test": TestCaseProposal(**data["test"]),
+            "validated": data["validated"],
+        }
 
     def set_to_cache(key, data):
-        (CACHE_DIR / f"{key}.json").write_text(json.dumps(data, indent=2))
+        serializable = {
+            "smell": data["smell"].model_dump(),
+            "refactor": data["refactor"].model_dump(),
+            "test": data["test"].model_dump(),
+            "validated": data["validated"],
+        }
+        (CACHE_DIR / f"{key}.json").write_text(json.dumps(serializable, indent=2))
 
     print(f"[*] Analyzing {file_name} for code smells...")
     smells = analyze_source_code(source_code, file_name, config)

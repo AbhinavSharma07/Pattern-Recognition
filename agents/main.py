@@ -1,4 +1,5 @@
 import logging
+import sys
 import typer
 import difflib
 from pathlib import Path
@@ -12,6 +13,12 @@ try:
     HAS_LIBCST = True
 except ImportError:
     HAS_LIBCST = False
+
+# Windows consoles often default to a legacy codepage (e.g. cp1252) that can't
+# encode the emoji used in this CLI's output, crashing with UnicodeEncodeError.
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 

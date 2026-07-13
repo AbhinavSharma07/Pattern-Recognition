@@ -1,5 +1,6 @@
 {
     "max_arguments": 5,
+    "max_function_length": 50,
     "max_nesting_depth": 3,
     "check_bare_except": true,
     "check_generic_exception": true,

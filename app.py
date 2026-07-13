@@ -21,13 +21,22 @@ if 'config' not in st.session_state:
 
 use_docker = st.sidebar.checkbox("Use Docker Sandbox", value=st.session_state.config.get("use_docker", False), help="Requires Docker Desktop to be running.")
 
-# Interactive JSON editor for the config
+# Interactive JSON editor for the config (Streamlit has no built-in JSON editor
+# widget, so we edit the raw text and validate/parse it on save).
 with st.sidebar.expander("Edit Configuration JSON", expanded=False):
-    edited_config = st.json_editor(st.session_state.config, height=300)
+    config_text = st.text_area(
+        "Configuration (JSON)",
+        value=json.dumps(st.session_state.config, indent=4),
+        height=300,
+    )
     if st.button("Save Config to File"):
-        with open("config.json", "w", encoding="utf-8") as f:
-            json.dump(edited_config, f, indent=4)
-        st.success("Configuration saved!")
+        try:
+            st.session_state.config = json.loads(config_text)
+            with open("config.json", "w", encoding="utf-8") as f:
+                json.dump(st.session_state.config, f, indent=4)
+            st.success("Configuration saved!")
+        except json.JSONDecodeError as e:
+            st.error(f"Invalid JSON, not saved: {e}")
 
 code_input = st.text_area("Paste Python Code Here:", height=300)
 uploaded_file = st.file_uploader("Or Upload a .py file", type=["py"])
@@ -41,11 +50,8 @@ if st.button("🚀 Analyze & Refactor", type="primary"):
         st.warning("Please provide some code to analyze.")
     else:
         with st.spinner("Agents are scanning and processing the codebase..."):
-            # Use the potentially edited config from the session state
-            current_config = edited_config
-            
             # Run the multi-agent pipeline
-            results = process_codebase(code_input, "streamlit_input.py", use_docker, current_config)
+            results = process_codebase(code_input, "streamlit_input.py", use_docker, st.session_state.config)
 
             if not results:
                 st.success("✅ No structural code smells detected. Your code is clean!")

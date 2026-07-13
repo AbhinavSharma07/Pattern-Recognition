@@ -52,10 +52,31 @@ An autonomous, end-to-end Python code analysis and refactoring tool that uses Ab
 
 To scan a Python file or directory for code smells:
 ```bash
-python -m cli.main scan path/to/your/code
+python -m agents.main scan path/to/your/code
 ```
 
-To automatically attempt to fix detected smells:
+To automatically attempt to fix detected smells (add `--apply` to write the
+validated refactors back to disk, `--report` for a Markdown summary, and
+`--docker` to run the sandbox tests inside a container):
 ```bash
-python -m cli.main fix path/to/your/code
+python -m agents.main fix path/to/your/code --apply --report
+```
+
+Alternatively, install the project (`pip install -e .`) to get an `ast-refactor`
+command on your PATH:
+```bash
+ast-refactor scan path/to/your/code
+ast-refactor fix path/to/your/code --apply
+```
+
+To launch the Streamlit UI:
+```bash
+streamlit run app.py
+```
+
+## Running the Tests
+
+```bash
+pip install -r requirements.txt
+pytest -v
 ```

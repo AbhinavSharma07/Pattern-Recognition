@@ -1,3 +1,32 @@
+[project]
+name = "ast-pattern-refactorer"
+version = "0.1.0"
+description = "Multi-Agent AST Pattern Analyzer & Auto-Refactorer"
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic>=2.0",
+    "python-dotenv>=1.0",
+    "typer>=0.12",
+    "langchain-core>=0.2",
+    "langchain-openai>=0.1",
+    "langchain-community>=0.2",
+    "langgraph>=0.1",
+    "streamlit>=1.32",
+    "libcst>=1.1",
+]
+
+[project.optional-dependencies]
+docker = ["docker>=7.0"]
+ollama = ["langchain-ollama>=0.1"]
+dev = ["pytest>=7.4"]
+
+[project.scripts]
+ast-refactor = "agents.main:app"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
 [tool.black]
 line-length = 88
 target-version = ['py310']
