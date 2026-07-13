@@ -11,7 +11,7 @@ def test_groq_missing_api_key_raises(monkeypatch):
 
 
 def test_groq_builds_chat_openai_pointed_at_groq_endpoint(monkeypatch):
-    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    monkeypatch.setenv("", "test-key")
 
     llm = llm_factory.build_chat_llm({"llm_backend": {"provider": "groq", "model": "llama-3.3-70b-versatile"}})
 
