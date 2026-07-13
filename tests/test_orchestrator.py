@@ -87,3 +87,22 @@ def test_process_codebase_retries_then_gives_up(tmp_path, monkeypatch):
 
     assert len(results) == 1
     assert results[0]["validated"] is False
+
+
+def test_process_codebase_survives_refactor_agent_exception(tmp_path, monkeypatch):
+    """A model that never returns usable structured output (e.g. an Ollama model
+    ignoring the JSON schema) must not crash the whole run -- it should be
+    treated like any other retryable failure and reported, not raised."""
+    monkeypatch.chdir(tmp_path)
+
+    def always_raises(smell, feedback, config):
+        raise ValueError("Invalid json output: not json at all")
+
+    monkeypatch.setattr(orchestrator, "run_refactor_agent", always_raises)
+
+    results = orchestrator.process_codebase(SOURCE_WITH_SMELL, "bad.py", config={})
+
+    assert len(results) == 1
+    assert results[0]["validated"] is False
+    assert "Invalid json output" in results[0]["refactor"].explanation
+    assert results[0]["test"].pytest_code  # placeholder test proposal, not None

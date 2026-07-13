@@ -27,25 +27,55 @@ class AgentGraphState(BaseModel):
     final_result: Optional[Dict] = None
 
 # --- 2. Define the Nodes (Agent Functions) ---
+# Every node below catches Exception broadly and on purpose: an LLM call can fail
+# in ways that have nothing to do with our code (a model that ignores the
+# structured-output schema, a transient provider error, ...). Treating any such
+# failure as retryable feedback keeps one bad LLM response from crashing the
+# whole batch, instead of only doing so for the reviewer/sandbox-rejection path.
 def refactor_code_node(state: AgentGraphState) -> AgentGraphState:
     """Node that runs the refactoring agent."""
     print("[*] Refactor Agent is rewriting the code...")
-    proposal = run_refactor_agent(state.smell, state.feedback, state.config)
+    try:
+        proposal = run_refactor_agent(state.smell, state.feedback, state.config)
+    except Exception as e:
+        print(f"[-] Refactor Agent failed: {e}")
+        state.refactor_proposal = None
+        state.feedback = f"REFACTOR AGENT ERROR: {e}"
+        state.retries_left -= 1
+        return state
     print(f"[+] Refactoring complete. Explanation: {proposal.explanation}")
     state.refactor_proposal = proposal
+    state.feedback = None
     return state
 
 def generate_tests_node(state: AgentGraphState) -> AgentGraphState:
     """Node that runs the test generation agent."""
+    if state.refactor_proposal is None:
+        return state  # A previous step already failed; nothing to generate tests for.
     print("[*] Test Agent is generating unit tests...")
-    proposal = run_test_agent(state.refactor_proposal, state.config)
+    try:
+        proposal = run_test_agent(state.refactor_proposal, state.config)
+    except Exception as e:
+        print(f"[-] Test Agent failed: {e}")
+        state.test_proposal = None
+        state.feedback = f"TEST AGENT ERROR: {e}"
+        state.retries_left -= 1
+        return state
     state.test_proposal = proposal
     return state
 
 def review_proposal_node(state: AgentGraphState) -> AgentGraphState:
     """Node that runs the reviewer agent."""
+    if state.refactor_proposal is None or state.test_proposal is None:
+        return state  # A previous step already failed; nothing to review.
     print("[*] Reviewer Agent is verifying the code and tests...")
-    review = run_reviewer_agent(state.smell, state.refactor_proposal, state.test_proposal, state.config)
+    try:
+        review = run_reviewer_agent(state.smell, state.refactor_proposal, state.test_proposal, state.config)
+    except Exception as e:
+        print(f"[-] Reviewer Agent failed: {e}")
+        state.feedback = f"REVIEWER AGENT ERROR: {e}"
+        state.retries_left -= 1
+        return state
     if not review.approved:
         print(f"[-] Reviewer REJECTED: {review.feedback}. Retrying...")
         state.feedback = f"REVIEWER FEEDBACK: {review.feedback}"
@@ -163,9 +193,22 @@ def process_codebase(source_code: str, file_name: str = "temp.py", use_docker: b
         initial_state = AgentGraphState(smell=smell, use_docker=use_docker, config=config)
         final_state = app.invoke(initial_state)
         result_data = final_state.get("final_result")
-        if not result_data: # Handle cases where max retries are hit
-            result_data = {"smell": smell, "refactor": final_state.get('refactor_proposal'), "test": final_state.get('test_proposal'), "validated": False}
-        results.append(result_data) 
+        if not result_data:
+            # Max retries hit without ever reaching the sandbox (e.g. the LLM never
+            # produced a usable proposal). Fall back to placeholder objects rather than
+            # None, so report/UI/apply code downstream can keep assuming real objects.
+            error_note = final_state.get("feedback") or "Agent pipeline failed for an unknown reason."
+            refactor_proposal = final_state.get("refactor_proposal") or RefactorProposal(
+                original_function_name=smell.target_name,
+                explanation=f"Refactoring failed after exhausting retries. Last error: {error_note}",
+                refactored_code=smell.raw_code,
+            )
+            test_proposal = final_state.get("test_proposal") or TestCaseProposal(
+                target_function_name=smell.target_name,
+                pytest_code="# No test could be generated: the agent pipeline failed before reaching this step.",
+            )
+            result_data = {"smell": smell, "refactor": refactor_proposal, "test": test_proposal, "validated": False}
+        results.append(result_data)
         
         # If successful, save the validated result to the cache
         if result_data and result_data["validated"]:

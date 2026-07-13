@@ -5,7 +5,7 @@ exercised without needing network access or an OPENAI_API_KEY.
 """
 from langchain_core.runnables import RunnableLambda
 from core.schemas import CodeSmell, RefactorProposal, TestCaseProposal
-from agents import refactor_agent, test_agent, reviewer_agent
+from agents import refactor_agent, test_agent, reviewer_agent, llm_factory
 from agents.reviewer_agent import ReviewDecision
 
 
@@ -42,7 +42,7 @@ SAMPLE_TEST = TestCaseProposal(
 
 def test_run_refactor_agent(monkeypatch):
     FakeChatModel.RESPONSES = {RefactorProposal: SAMPLE_REFACTOR}
-    monkeypatch.setattr(refactor_agent, "ChatOpenAI", FakeChatModel)
+    monkeypatch.setattr(llm_factory, "ChatOpenAI", FakeChatModel)
 
     result = refactor_agent.run_refactor_agent(SAMPLE_SMELL, config={})
 
@@ -51,7 +51,7 @@ def test_run_refactor_agent(monkeypatch):
 
 def test_run_refactor_agent_with_feedback(monkeypatch):
     FakeChatModel.RESPONSES = {RefactorProposal: SAMPLE_REFACTOR}
-    monkeypatch.setattr(refactor_agent, "ChatOpenAI", FakeChatModel)
+    monkeypatch.setattr(llm_factory, "ChatOpenAI", FakeChatModel)
 
     result = refactor_agent.run_refactor_agent(
         SAMPLE_SMELL, feedback="tests failed: AssertionError", config={}
@@ -62,7 +62,7 @@ def test_run_refactor_agent_with_feedback(monkeypatch):
 
 def test_run_test_agent(monkeypatch):
     FakeChatModel.RESPONSES = {TestCaseProposal: SAMPLE_TEST}
-    monkeypatch.setattr(test_agent, "ChatOpenAI", FakeChatModel)
+    monkeypatch.setattr(llm_factory, "ChatOpenAI", FakeChatModel)
 
     result = test_agent.run_test_agent(SAMPLE_REFACTOR, config={})
 
@@ -72,7 +72,7 @@ def test_run_test_agent(monkeypatch):
 def test_run_reviewer_agent(monkeypatch):
     decision = ReviewDecision(approved=True, feedback="Looks good.")
     FakeChatModel.RESPONSES = {ReviewDecision: decision}
-    monkeypatch.setattr(reviewer_agent, "ChatOpenAI", FakeChatModel)
+    monkeypatch.setattr(llm_factory, "ChatOpenAI", FakeChatModel)
 
     result = reviewer_agent.run_reviewer_agent(SAMPLE_SMELL, SAMPLE_REFACTOR, SAMPLE_TEST, config={})
 

@@ -1,16 +1,8 @@
 from pydantic import BaseModel, Field
-from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from core.schemas import CodeSmell, RefactorProposal, TestCaseProposal
+from agents.llm_factory import build_chat_llm
 from typing import Dict, Any
-
-try:
-    from langchain_ollama import ChatOllama
-except ImportError:
-    try:
-        from langchain_community.chat_models import ChatOllama
-    except ImportError:
-        ChatOllama = None
 
 class ReviewDecision(BaseModel):
     approved: bool = Field(description="True if the refactor and tests are solid and safe to run. False otherwise.")
@@ -18,18 +10,7 @@ class ReviewDecision(BaseModel):
 
 def get_reviewer_agent(config: Dict[str, Any] = None):
     """Configures the Reviewer Agent to act as a gatekeeper."""
-    config = config or {}
-    llm_config = config.get("llm_backend", {"provider": "openai", "model": "gpt-4o-mini"})
-
-    if llm_config.get("provider") == "ollama":
-        if ChatOllama is None:
-            raise RuntimeError(
-                "Ollama support requires the 'langchain-ollama' package. Install it with: pip install langchain-ollama"
-            )
-        llm = ChatOllama(model=llm_config.get("model", "llama3"), temperature=0.1)
-    else:
-        llm = ChatOpenAI(model=llm_config.get("model", "gpt-4o-mini"), temperature=0.1)
-        
+    llm = build_chat_llm(config)
     structured_llm = llm.with_structured_output(ReviewDecision)
     
     prompt = ChatPromptTemplate.from_messages([
