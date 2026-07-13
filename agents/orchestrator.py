@@ -101,14 +101,25 @@ def sandbox_validation_node(state: AgentGraphState) -> AgentGraphState:
     return state
 
 
-def process_codebase(source_code: str, file_name: str = "temp.py", use_docker: bool = False, config: Dict[str, Any] = None) -> List[Dict[str, Any]]:
+def process_codebase(
+    source_code: str,
+    file_name: str = "temp.py",
+    use_docker: bool = False,
+    config: Dict[str, Any] = None,
+    cache_namespace: str = None,
+) -> List[Dict[str, Any]]:
     """
     Orchestrates the full flow: Parse -> Detect -> Refactor -> Test Generation
+
+    cache_namespace scopes the validated-result cache (e.g. to a browser
+    session hash in a multi-tenant web UI) so one caller's cached results
+    are never served to a different caller. Defaults to a shared namespace,
+    matching the original single-user CLI behavior.
     """
-    
+
     # --- Caching Setup ---
-    CACHE_DIR = Path(".agent_cache")
-    CACHE_DIR.mkdir(exist_ok=True)
+    CACHE_DIR = Path(".agent_cache") / (cache_namespace or "shared")
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
     def get_cache_key(smell):
         return hashlib.sha256(f"{smell.issue_type}:{smell.raw_code}".encode()).hexdigest()

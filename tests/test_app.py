@@ -68,3 +68,51 @@ def test_save_config_rejects_invalid_json(tmp_path, monkeypatch):
 
     assert "invalid json" in status.lower()
     assert not (tmp_path / "config.json").exists()
+
+
+def test_save_config_on_hf_space_does_not_write_shared_file(tmp_path, monkeypatch):
+    """On a public Space, config.json is shared filesystem state across every
+    visitor -- saving one visitor's edits there would leak to everyone else."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SPACE_ID", "someuser/somespace")
+
+    status = app.save_config('{"max_arguments": 3}')
+
+    assert "session" in status.lower()
+    assert not (tmp_path / "config.json").exists()
+
+
+def test_run_analysis_forces_docker_off_on_hf_space(monkeypatch):
+    """No Docker daemon exists inside a Space container -- use_docker must be
+    ignored there even if somehow set True (e.g. via direct API access)."""
+    monkeypatch.setenv("SPACE_ID", "someuser/somespace")
+    captured = {}
+
+    def fake_process_codebase(source, file_name, use_docker, config, cache_namespace=None):
+        captured["use_docker"] = use_docker
+        return []
+
+    monkeypatch.setattr(app, "process_codebase", fake_process_codebase)
+
+    app.run_analysis("def add(a, b):\n    return a + b\n", [], True, "{}")
+
+    assert captured["use_docker"] is False
+
+
+def test_run_analysis_scopes_cache_to_session(monkeypatch):
+    """Each browser session's results must be cached under its own namespace so
+    one visitor's cached result is never served to a different visitor."""
+    captured = {}
+
+    def fake_process_codebase(source, file_name, use_docker, config, cache_namespace=None):
+        captured["cache_namespace"] = cache_namespace
+        return []
+
+    monkeypatch.setattr(app, "process_codebase", fake_process_codebase)
+
+    class FakeRequest:
+        session_hash = "abc123"
+
+    app.run_analysis("def add(a, b):\n    return a + b\n", [], False, "{}", request=FakeRequest())
+
+    assert captured["cache_namespace"] == "abc123"

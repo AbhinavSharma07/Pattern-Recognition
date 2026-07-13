@@ -70,6 +70,33 @@ def test_process_codebase_caches_validated_result(tmp_path, monkeypatch):
     assert first[0]["refactor"] == second[0]["refactor"] == SAMPLE_REFACTOR
 
 
+def test_process_codebase_cache_isolated_by_namespace(tmp_path, monkeypatch):
+    """Two different cache_namespaces (e.g. two different browser sessions on a
+    shared public deployment) must never share cached results."""
+    monkeypatch.chdir(tmp_path)
+    calls = {"n": 0}
+
+    def fake_refactor(smell, feedback, config):
+        calls["n"] += 1
+        return SAMPLE_REFACTOR
+
+    monkeypatch.setattr(orchestrator, "run_refactor_agent", fake_refactor)
+    monkeypatch.setattr(orchestrator, "run_test_agent", lambda proposal, config: SAMPLE_TEST)
+    monkeypatch.setattr(
+        orchestrator, "run_reviewer_agent",
+        lambda smell, refactor, test, config: ReviewDecision(approved=True, feedback="Looks good."),
+    )
+    monkeypatch.setattr(
+        orchestrator, "execute_tests",
+        lambda refactored_code, test_code, use_docker=False: {"success": True, "output": "1 passed"},
+    )
+
+    orchestrator.process_codebase(SOURCE_WITH_SMELL, "bad.py", config={}, cache_namespace="session-a")
+    orchestrator.process_codebase(SOURCE_WITH_SMELL, "bad.py", config={}, cache_namespace="session-b")
+
+    assert calls["n"] == 2  # each namespace re-invokes the agent; no cross-session cache hit
+
+
 def test_process_codebase_retries_then_gives_up(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(orchestrator, "run_refactor_agent", lambda smell, feedback, config: SAMPLE_REFACTOR)
