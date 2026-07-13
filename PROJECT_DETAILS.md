@@ -1,5 +1,18 @@
 # Project Details: Multi-Agent AST Pattern Analyzer & Auto-Refactorer
 
+## 0. Status: Feature-complete (v1)
+
+All four roadmap phases below are implemented, dependency-installable
+(`requirements.txt` / `pyproject.toml`), and covered by an automated test
+suite (`tests/`, run in CI via `.github/workflows/ci.yml`). The `scan`
+command, the sandbox, and the Streamlit UI have been exercised directly
+(not just read) to confirm they run without crashing. The one thing that
+has **not** been exercised end-to-end is the `fix` command against a real
+LLM — that requires a live `OPENAI_API_KEY` and real API spend, and was
+instead verified by mocking the LLM calls in `tests/test_agents.py` and
+`tests/test_orchestrator.py` to confirm the LangChain/LangGraph wiring
+(prompt variables, structured-output schemas, retry/cache logic) is correct.
+
 ## 1. Project Overview
 
 **Objective:** Develop an autonomous, end-to-end Python code analysis and refactoring tool. The system will statically analyze codebases to detect architectural anti-patterns using Abstract Syntax Trees (AST). Upon detection, a multi-agent LLM system will autonomously refactor the code, write unit tests to verify the refactor, and safely execute the tests in a sandboxed environment before accepting the changes.
@@ -64,79 +77,91 @@ The system is designed with a modular architecture, divided into three primary p
 -   **`flake8`**: Linter for identifying stylistic and programmatic errors.
 -   **`mypy`**: Static type checker for ensuring type correctness.
 
-## 4. Proposed Directory Structure
+## 4. Actual Directory Structure
+
+`core` and `agents` are namespace packages (no `__init__.py` needed on
+Python 3.10+). There is no separate `cli/` package — the Typer CLI lives in
+`agents/main.py` alongside the agent code it calls.
 
 ```
-ast_agent_refactorer/
+Pattern-Recognition/
 ├── core/
-│   ├── __init__.py
-│   ├── parser.py          # AST NodeVisitor implementation for code smell detection
-│   ├── schemas.py         # Pydantic models (CodeSmell, RefactorProposal, etc.)
-│   └── sandbox.py         # Secure code execution and pytest runner
+│   ├── parser.py          # AntiPatternVisitor: AST-based code smell detection
+│   ├── schemas.py         # Pydantic models (CodeSmell, RefactorProposal, TestCaseProposal)
+│   └── sandbox.py         # Isolated pytest execution (subprocess, optional Docker)
 ├── agents/
-│   ├── __init__.py
-│   ├── orchestrator.py    # Manages the agent workflow (LangGraph/LangChain)
-│   ├── refactor_agent.py  # LLM prompts and chains for code rewriting
-│   └── test_agent.py      # LLM prompts and chains for pytest generation
-├── cli/
-│   ├── __init__.py
-│   └── main.py            # Command Line Interface entry point
+│   ├── orchestrator.py    # LangGraph workflow: refactor -> test -> review -> sandbox,
+│   │                      # with retry-on-failure and validated-result caching
+│   ├── refactor_agent.py  # LLM chain: CodeSmell -> RefactorProposal
+│   ├── test_agent.py      # LLM chain: RefactorProposal -> TestCaseProposal
+│   ├── reviewer_agent.py  # LLM gatekeeper: approves/rejects a refactor+test pair pre-sandbox
+│   └── main.py            # Typer CLI entry point (`scan`, `fix --apply --report --docker`)
 ├── tests/
-│   ├── test_parser.py     # Unit tests for the AST parser
-│   ├── test_agents.py     # Unit tests for agent interactions
-│   └── test_sandbox.py    # Unit tests for the sandbox execution
-├── .env                   # Environment variables (e.g., API keys)
-├── pyproject.toml         # Project configuration (e.g., for Black, Flake8)
-├── requirements.txt       # Python package dependencies (minimal list)
-├── PROJECT_DETAILS.md     # This document
-└── README.md              # High-level project description and usage
+│   ├── test_parser.py       # Built-in + custom-rule smell detection
+│   ├── test_sandbox.py      # Real pytest execution in a temp dir (pass/fail/syntax-error cases)
+│   ├── test_agents.py       # Prompt-wiring checks with the LLM mocked out
+│   └── test_orchestrator.py # Full LangGraph flow with the LLM mocked out (incl. caching, retries)
+├── app.py                 # Streamlit UI
+├── .github/workflows/ci.yml  # Installs requirements.txt and runs pytest on push/PR
+├── .env                   # Environment variables (e.g., API keys) — gitignored, not committed
+├── config.json             # Default anti-pattern rule configuration
+├── pyproject.toml          # Project metadata, dependencies, [project.scripts], tool config
+├── requirements.txt         # Pinned dependency list for `pip install -r`
+├── PROJECT_DETAILS.md       # This document
+└── README.md                # High-level project description and usage
 ```
 
 ## 5. Development Roadmap (Phased Approach)
 
-### Phase 1: Foundation & Static Analysis (Estimated: 3 Days)
+### Phase 1: Foundation & Static Analysis — ✅ Complete
 -   **Goal:** Establish project structure and a robust AST-based code smell detection.
--   **Tasks:**
-    -   Set up the repository structure and initial virtual environment.
-    -   Implement `core/schemas.py` with `CodeSmell`, `RefactorProposal`, `TestCaseProposal` Pydantic models.
-    -   Implement `core/parser.py` with `AntiPatternVisitor` to detect 3-5 distinct anti-patterns (e.g., excessive arguments, deep nesting, bare `except`).
-    -   Create basic unit tests for `parser.py` in `tests/test_parser.py`.
--   **Milestone:** A CLI command (using a placeholder `cli/main.py`) that can scan a given Python file and print structured JSON of all detected `CodeSmell` objects.
+-   Delivered: `core/schemas.py` (`CodeSmell`, `RefactorProposal`, `TestCaseProposal`); `core/parser.py`'s
+    `AntiPatternVisitor` detects long functions, too-many-arguments, bare/generic `except`, excessive
+    nesting depth, complex list comprehensions, and user-defined custom rules (`Call`/`Import`/`Decorator`
+    matchers from `config.json`); `tests/test_parser.py` covers all of the above.
+-   **Milestone met via:** `agents/main.py scan <path>` (not the originally-planned `cli/main.py` — the CLI
+    ended up living alongside the agents it calls).
 
-### Phase 2: Agent Orchestration (Estimated: 4 Days)
+### Phase 2: Agent Orchestration — ✅ Complete
 -   **Goal:** Integrate LLMs to perform refactoring and test generation.
--   **Tasks:**
-    -   Configure LLM provider integration (OpenAI API) and `python-dotenv` for API key management.
-    -   Develop `agents/refactor_agent.py`: Create LangChain prompts and chains that take a `CodeSmell` and output a `RefactorProposal` (enforcing Pydantic schema).
-    -   Develop `agents/test_agent.py`: Create LangChain prompts and chains that take a `RefactorProposal` (specifically the `refactored_code`) and output a `TestCaseProposal`.
-    -   Implement `agents/orchestrator.py` to sequence these agents.
--   **Milestone:** The system can take a problematic code snippet, generate a refactored version, and generate corresponding pytest code, without actual execution.
+-   Delivered: `agents/refactor_agent.py` and `agents/test_agent.py` as planned, plus an unplanned addition —
+    `agents/reviewer_agent.py`, an LLM gatekeeper that approves/rejects a refactor+test pair before it ever
+    reaches the sandbox. `agents/orchestrator.py` sequences all of it as a LangGraph `StateGraph`.
+    Both OpenAI and (optional) Ollama backends are supported via `config.json`'s `llm_backend`.
+-   **Verification:** `tests/test_agents.py` and `tests/test_orchestrator.py` exercise the real LangChain
+    prompt templates and LangGraph control flow with the LLM call itself mocked out.
 
-### Phase 3: Sandbox Validation & Feedback Loop (Estimated: 4 Days)
+### Phase 3: Sandbox Validation & Feedback Loop — ✅ Complete
 -   **Goal:** Safely execute generated code and tests, and enable iterative improvements.
--   **Tasks:**
-    -   Implement `core/sandbox.py`: Functions to create isolated temporary directories, write refactored code and tests, and execute `pytest` via `subprocess`.
-    -   Capture `pytest` output (stdout, stderr, exit code).
-    -   Integrate the sandbox into the `orchestrator.py` workflow.
-    -   Implement the **Feedback Loop**: If `pytest` fails, feed the error trace and original `CodeSmell` back to the Refactor Agent for a retry (with a defined maximum retry limit).
--   **Milestone:** Autonomous, validated code modification where the system can attempt refactors, run tests, and retry if tests fail.
+-   Delivered: `core/sandbox.py` runs generated code + pytest in a temp dir via `subprocess` (with a hard
+    timeout), or optionally inside a `python:3.10-slim` Docker container via the `docker` SDK. The
+    orchestrator's `retries_left` loop feeds sandbox/reviewer failures back to the Refactor Agent.
+-   **Verification:** `tests/test_sandbox.py` runs real pytest subprocesses (pass, fail, and syntax-error
+    cases); `tests/test_orchestrator.py::test_process_codebase_retries_then_gives_up` exercises the retry path.
 
-### Phase 4: CLI Polish & Reporting (Estimated: 3 Days)
+### Phase 4: CLI Polish & Reporting — ✅ Complete
 -   **Goal:** Create a user-friendly CLI and comprehensive reporting.
--   **Tasks:**
-    -   Finalize `cli/main.py` using `typer` to provide commands like `ast-refactor scan <path>` and `ast-refactor fix <path>`.
-    -   Implement robust error handling and logging throughout the application.
-    -   Develop a reporting module to generate a summary of changes, diffs, and test results (e.g., in Markdown or HTML format).
-    -   Add configuration options (e.g., LLM model choice, max retries, anti-pattern thresholds).
--   **Milestone:** A fully functional command-line tool that can scan, auto-fix with validation, and report on changes.
+-   Delivered: `agents/main.py` (`scan`, `fix --apply --report --docker --config`), Markdown diff reports via
+    `difflib`, `libcst`-based in-place refactor application (falls back to string replacement if libcst fails
+    to parse), and a `pyproject.toml` `[project.scripts]` entry (`ast-refactor`) for installed use.
 
-## 6. Future Considerations (V2 & Beyond)
--   **Advanced AST Modification:** Explore using `libcst` or similar libraries for more robust AST manipulation, allowing for precise in-place refactoring without relying solely on string replacement.
--   **Enhanced Security Sandboxing:** Fully integrate the `docker` Python SDK to run code execution in isolated containers, providing stronger security guarantees.
--   **Custom Anti-Pattern Rules:** Allow users to define their own anti-pattern detection rules.
--   **Multi-File Refactoring:** Extend agents to understand and refactor code across multiple interdependent files.
--   **Integration with CI/CD:** Develop hooks for integration into existing CI/CD pipelines.
--   **Different LLM Backends:** Support for other LLM providers (e.g., Google Gemini, Anthropic Claude) or local LLMs (e.g., via Ollama).
--   **UI/Dashboard:** A web-based interface for visualizing code smells, refactoring proposals, and progress.
+## 6. Already Delivered Beyond the Original Roadmap
+These were listed as "V2 & Beyond" ideas but are implemented in v1:
+-   **Advanced AST Modification** — `agents/main.py`'s `RefactorTransformer` uses `libcst` for in-place
+    refactor application.
+-   **Enhanced Security Sandboxing** — `core/sandbox.py` already supports a Docker-isolated sandbox
+    (`--docker` CLI flag / "Use Docker Sandbox" in the UI).
+-   **UI/Dashboard** — `app.py` is a working Streamlit UI (paste/upload code, edit config, view results).
+-   **Basic CI** — `.github/workflows/ci.yml` runs the test suite on every push/PR (though it doesn't yet
+    run the tool's own `scan`/`fix` against itself — see below).
+
+## 7. Genuinely Open (V2 & Beyond)
+-   **Custom Anti-Pattern Rules:** `config.json` already supports user-defined `Call`/`Import`/`Decorator`
+    rules; adding entirely new rule *categories* (beyond those three) still requires editing `core/parser.py`.
+-   **Multi-File Refactoring:** Agents still operate on one smell/file at a time; no cross-file awareness.
+-   **Deeper CI/CD Integration:** Running the refactor bot itself (not just its test suite) as a PR check.
+-   **Additional LLM Backends:** Google Gemini / Anthropic Claude are not wired up (OpenAI + Ollama only).
+-   **Live end-to-end verification:** The `fix` command has never been run against a real LLM in this
+    project's history — only with the LLM mocked. Recommended before relying on it in production.
 
 ---
