@@ -17,8 +17,8 @@ An autonomous, end-to-end Python code analysis and refactoring tool that uses Ab
 
 -   **Language:** Python 3.10+
 -   **Static Analysis:** Built-in `ast` module
--   **Agent Framework:** LangChain
--   **LLM Integration:** `langchain-openai`
+-   **Agent Framework:** LangChain / LangGraph
+-   **LLM Integration:** Groq
 -   **Data Validation:** Pydantic
 -   **CLI Framework:** Typer
 -   **Testing:** `pytest`
@@ -43,9 +43,20 @@ An autonomous, end-to-end Python code analysis and refactoring tool that uses Ab
     ```
 
 4.  **Set up environment variables:**
-    Create a `.env` file in the root directory and add your OpenAI API key:
+    Create a `.env` file in the root directory and add an API key for whichever
+    LLM backend you want to use. The default (`config.json`'s `llm_backend`) is
+    **Groq**, since it's free and confirmed to reliably complete the full
+    refactor → test → review → sandbox pipeline:
     ```
-    OPENAI_API_KEY="your-api-key-here"
+    GROQ_API_KEY="your-groq-api-key-here"
+    ```
+    Get a free key at [console.groq.com/keys](https://console.groq.com/keys).
+
+    Alternative backends are also supported — set `llm_backend.provider` in
+    `config.json` to switch, and provide the matching key:
+    ```
+    OPENAI_API_KEY="your-openai-api-key-here"      # provider: "openai"
+    OLLAMA_API_KEY="your-ollama-cloud-key-here"     # provider: "ollama" (omit for a local Ollama server)
     ```
 
 ## Basic Usage

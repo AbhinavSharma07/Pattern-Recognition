@@ -1,7 +1,7 @@
 from pydantic import BaseModel, Field
 from langchain_core.prompts import ChatPromptTemplate
 from core.schemas import CodeSmell, RefactorProposal, TestCaseProposal
-from agents.llm_factory import build_chat_llm
+from agents.llm_factory import build_structured_llm
 from typing import Dict, Any
 
 class ReviewDecision(BaseModel):
@@ -10,8 +10,7 @@ class ReviewDecision(BaseModel):
 
 def get_reviewer_agent(config: Dict[str, Any] = None):
     """Configures the Reviewer Agent to act as a gatekeeper."""
-    llm = build_chat_llm(config)
-    structured_llm = llm.with_structured_output(ReviewDecision)
+    structured_llm = build_structured_llm(config, ReviewDecision)
     
     prompt = ChatPromptTemplate.from_messages([
         ("system", "You are a Senior Principal Python Engineer acting as a code reviewer. Your job is to review AI-generated refactored code and its accompanying Pytest unit tests.\n\nReject the proposal (approved=False) if:\n1. The refactored code changes the original logic or introduces bugs.\n2. The test code is missing imports, contains syntax errors, or does not properly test the target function.\n3. The AI hallucinated variables or external dependencies.\n\nProvide clear feedback if rejecting. If it looks perfect, approve it (approved=True)."),

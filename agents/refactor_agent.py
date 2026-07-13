@@ -1,16 +1,14 @@
 from langchain_core.prompts import ChatPromptTemplate
 from core.schemas import CodeSmell, RefactorProposal
-from agents.llm_factory import build_chat_llm
+from agents.llm_factory import build_structured_llm
 from typing import Dict, Any
 
 def get_refactor_agent(config: Dict[str, Any] = None):
     """
     Configures and returns the LangChain refactoring agent.
     """
-    llm = build_chat_llm(config)
-
     # Enforce the structured output using our Pydantic model
-    structured_llm = llm.with_structured_output(RefactorProposal)
+    structured_llm = build_structured_llm(config, RefactorProposal)
 
     # Create the prompt template instructing the LLM on how to behave
     prompt = ChatPromptTemplate.from_messages([

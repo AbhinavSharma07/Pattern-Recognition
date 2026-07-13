@@ -1,14 +1,13 @@
 from langchain_core.prompts import ChatPromptTemplate
 from core.schemas import RefactorProposal, TestCaseProposal
-from agents.llm_factory import build_chat_llm
+from agents.llm_factory import build_structured_llm
 from typing import Dict, Any
 
 def get_test_agent(config: Dict[str, Any] = None):
     """
     Configures and returns the LangChain test generation agent.
     """
-    llm = build_chat_llm(config)
-    structured_llm = llm.with_structured_output(TestCaseProposal)
+    structured_llm = build_structured_llm(config, TestCaseProposal)
 
     prompt = ChatPromptTemplate.from_messages([
         ("system", "You are an expert Python QA engineer. Given a refactored Python function, write a robust pytest function to test it. Consider edge cases, valid inputs, and potential errors. Return the pytest code strictly according to the requested schema. Ensure the code is ready to execute.\n\nIMPORTANT: Assume the refactored function is saved in a file named `target_module.py`. You MUST import the target function from it at the top of your test code (e.g., `from target_module import your_function`)."),

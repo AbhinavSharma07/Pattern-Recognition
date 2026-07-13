@@ -1,3 +1,4 @@
+import ast
 import logging
 import sys
 import typer
@@ -23,18 +24,37 @@ if sys.platform == "win32":
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class RefactorTransformer(cst.CSTTransformer):
-    """Safely replaces AST nodes with AI-refactored code while preserving formatting."""
+    """
+    Replaces a target function's body with AI-refactored code while preserving
+    formatting elsewhere in the file. Only matches smells whose target IS the
+    containing function (e.g. Too Many Arguments, Excessive Nesting Depth) --
+    it can't target a sub-expression inside a function (a call, an except
+    clause, a comprehension), since those smells' target_name isn't a function
+    name; those are left for the caller's string-replace fallback.
+    """
     def __init__(self, target_name: str, new_code: str):
         self.target_name = target_name
+        self.applied = False
         try:
-            self.replacement_node = cst.parse_statement(new_code)
+            # A refactor commonly introduces a helper function alongside the
+            # fix, i.e. more than one top-level statement -- parse_module (not
+            # parse_statement, which only accepts exactly one statement) so
+            # multi-statement replacements don't fail to parse here.
+            self.replacement_statements = list(cst.parse_module(new_code).body)
         except Exception as e:
             logging.warning(f"Failed to parse refactored code with libcst: {e}. Will use fallback.", exc_info=True)
-            self.replacement_node = None
+            self.replacement_statements = None
 
     def leave_FunctionDef(self, original_node, updated_node):
-        if original_node.name.value == self.target_name and self.replacement_node:
-            return self.replacement_node
+        if (
+            not self.applied
+            and self.replacement_statements
+            and original_node.name.value == self.target_name
+        ):
+            self.applied = True
+            if len(self.replacement_statements) == 1:
+                return self.replacement_statements[0]
+            return cst.FlattenSentinel(self.replacement_statements)
         return updated_node
 
 # Load environment variables (.env) for the API key
@@ -109,43 +129,81 @@ def fix(
             typer.secho(f"\n📄 Markdown report generated and saved to: {report_path}", fg=typer.colors.GREEN)
 
         if apply and results:
-            new_source = source_code
-            changes_applied = 0
-            new_imports = set()
+            new_source, changes_applied = apply_validated_fixes(source_code, results)
 
-            for res in results:
-                if res.get("validated", False):
-                    smell = res["smell"]
-                    refactor = res["refactor"]
-                    
-                    if HAS_LIBCST:
-                        try:
-                            module = cst.parse_module(new_source)
-                            transformer = RefactorTransformer(smell.target_name, refactor.refactored_code)
-                            modified_module = module.visit(transformer)
-                            
-                            if not module.deep_equals(modified_module):
-                                new_source = modified_module.code
-                                changes_applied += 1
-                            elif smell.raw_code in new_source: # Fallback
-                                new_source = new_source.replace(smell.raw_code, refactor.refactored_code)
-                                changes_applied += 1
-                        except Exception as e:
-                            logging.warning(f"LibCST transformation failed for {smell.target_name}: {e}", exc_info=True)
-                            pass # Let fallback catch it below
-                    elif smell.raw_code in new_source:
-                        new_source = new_source.replace(smell.raw_code, refactor.refactored_code)
-                        changes_applied += 1
-                        
-                        for imp in refactor.required_imports:
-                            if imp not in new_source:
-                                new_imports.add(imp)
-            
             if changes_applied > 0:
-                if new_imports:
-                    new_source = "\n".join(new_imports) + "\n\n" + new_source
                 file_path.write_text(new_source, encoding="utf-8")
                 typer.secho(f"✅ Successfully applied {changes_applied} validated fix(es) directly to {file_path.name}!", fg=typer.colors.GREEN)
+            elif any(res.get("validated", False) for res in results):
+                typer.secho(
+                    "⚠️ Validated fixes were found, but none could be safely applied "
+                    "(see warnings above -- they likely overlap with each other).",
+                    fg=typer.colors.YELLOW,
+                )
+
+def apply_validated_fixes(source_code: str, results: list) -> tuple:
+    """
+    Applies every validated fix in `results` to `source_code`, one at a time.
+
+    Two validated fixes can overlap (e.g. a whole-function rewrite for
+    "Excessive Nesting Depth" and a fix for one call inside that same
+    function) -- applying both via naive string-replacement can silently
+    produce syntactically invalid Python. To guard against that, each
+    candidate result is verified with ast.parse before being kept; a fix that
+    would break the file is skipped (and logged) rather than written.
+
+    Returns (new_source, count_of_fixes_actually_applied).
+    """
+    new_source = source_code
+    changes_applied = 0
+    new_imports = set()
+
+    for res in results:
+        if not res.get("validated", False):
+            continue
+
+        smell = res["smell"]
+        refactor = res["refactor"]
+        candidate_source = None
+
+        if HAS_LIBCST:
+            try:
+                module = cst.parse_module(new_source)
+                transformer = RefactorTransformer(smell.target_name, refactor.refactored_code)
+                modified_module = module.visit(transformer)
+                if not module.deep_equals(modified_module):
+                    candidate_source = modified_module.code
+            except Exception as e:
+                logging.warning(f"LibCST transformation failed for {smell.target_name}: {e}", exc_info=True)
+
+        # Fallback: either libcst isn't available, the target isn't a function
+        # (e.g. a call/except/comprehension smell -- RefactorTransformer can only
+        # match function-level targets), or the libcst parse/transform failed.
+        if candidate_source is None and smell.raw_code in new_source:
+            candidate_source = new_source.replace(smell.raw_code, refactor.refactored_code)
+
+        if candidate_source is None:
+            continue
+
+        try:
+            ast.parse(candidate_source)
+        except SyntaxError as e:
+            logging.warning(
+                f"Skipping fix for '{smell.target_name}': applying it would leave the file with "
+                f"invalid Python ({e}). It likely overlaps with another already-applied fix."
+            )
+            continue
+
+        new_source = candidate_source
+        changes_applied += 1
+        for imp in refactor.required_imports:
+            if imp not in new_source:
+                new_imports.add(imp)
+
+    if new_imports:
+        new_source = "\n".join(sorted(new_imports)) + "\n\n" + new_source
+
+    return new_source, changes_applied
 
 def _render_result_section(res: dict) -> str:
     """Renders a single smell/refactor/test result as a Markdown section."""
