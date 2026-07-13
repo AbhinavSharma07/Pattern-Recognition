@@ -232,7 +232,7 @@ def build_markdown_report(results: list) -> str:
 
 
 def build_combined_markdown_report(results_by_file: Dict[str, list]) -> str:
-    """Builds one combined Markdown report covering multiple files' results (used by the Streamlit UI)."""
+    """Builds one combined Markdown report covering multiple files' results (used by the Gradio UI)."""
     lines = ["# Refactoring Report\n"]
     for file_name, results in results_by_file.items():
         lines.append(f"# File: `{file_name}`\n")

@@ -11,7 +11,7 @@ dependencies = [
     "langchain-openai>=0.1",
     "langchain-community>=0.2",
     "langgraph>=0.1",
-    "streamlit>=1.32",
+    "gradio>=4.44",
     "libcst>=1.1",
 ]
 

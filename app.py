@@ -1,116 +1,130 @@
-import streamlit as st
 import json
+from pathlib import Path
+
+import gradio as gr
+
 from core.parser import load_config
 from agents.orchestrator import process_codebase
 from agents.main import build_combined_markdown_report
 from dotenv import load_dotenv
 
-# Load environment variables (.env) for the API key
 load_dotenv()
 
-st.set_page_config(page_title="AST Refactor Bot", page_icon="🤖", layout="wide")
+REPORT_PATH = Path("refactor_report.md")
 
-st.title("🤖 Multi-Agent AST Auto-Refactorer")
-st.markdown(
-    "Paste a Python snippet below, or upload one or more `.py` files (multi-select), "
-    "to have the AI agents analyze, refactor, and validate them."
-)
 
-# Sidebar settings
-st.sidebar.header("⚙️ Configuration")
+def _render_result(i: int, res: dict) -> str:
+    smell, refactor, test = res["smell"], res["refactor"], res["test"]
+    validated = res.get("validated", False)
+    status = "✅ PASSED SANDBOX TESTS (Safe to apply)" if validated else "❌ FAILED SANDBOX TESTS (Refactor introduced errors)"
 
-# Load config into session state if not already there
-if 'config' not in st.session_state:
-    st.session_state.config = load_config("config.json")
+    return "\n".join([
+        f"### Issue {i}: {smell.issue_type} in `{smell.target_name}`",
+        f"**Validation Status:** {status}\n",
+        f"**AI Explanation:** {refactor.explanation}\n",
+        "**Original Code**",
+        f"```python\n{smell.raw_code}\n```",
+        "**Refactored Code**",
+        f"```python\n{refactor.refactored_code}\n```",
+        "**Generated Pytest Validation**",
+        f"```python\n{test.pytest_code}\n```",
+        "---",
+    ])
 
-use_docker = st.sidebar.checkbox("Use Docker Sandbox", value=st.session_state.config.get("use_docker", False), help="Requires Docker Desktop to be running.")
 
-# Interactive JSON editor for the config (Streamlit has no built-in JSON editor
-# widget, so we edit the raw text and validate/parse it on save).
-with st.sidebar.expander("Edit Configuration JSON", expanded=False):
-    config_text = st.text_area(
-        "Configuration (JSON)",
-        value=json.dumps(st.session_state.config, indent=4),
-        height=300,
-    )
-    if st.button("Save Config to File"):
-        try:
-            st.session_state.config = json.loads(config_text)
-            with open("config.json", "w", encoding="utf-8") as f:
-                json.dump(st.session_state.config, f, indent=4)
-            st.success("Configuration saved!")
-        except json.JSONDecodeError as e:
-            st.error(f"Invalid JSON, not saved: {e}")
+def run_analysis(code_input: str, uploaded_files, use_docker: bool, config_text: str):
+    """
+    Runs the multi-agent pipeline over the pasted snippet and/or uploaded files.
+    Returns (status_markdown, report_file_path_or_None).
+    """
+    try:
+        config = json.loads(config_text)
+    except json.JSONDecodeError as e:
+        return f"⚠️ **Invalid configuration JSON, not run:** {e}", None
 
-code_input = st.text_area("Paste Python Code Here:", height=250)
-uploaded_files = st.file_uploader(
-    "Or upload one or more .py files",
-    type=["py"],
-    accept_multiple_files=True,
-    help="Select multiple files at once from your OS file picker to process a whole batch in one run.",
-)
-
-if st.button("🚀 Analyze & Refactor", type="primary"):
     files_to_process = []
-    if code_input.strip():
+    if code_input and code_input.strip():
         files_to_process.append(("pasted_code.py", code_input))
-    for uploaded_file in uploaded_files:
-        files_to_process.append((uploaded_file.name, uploaded_file.getvalue().decode("utf-8")))
+    for file_path in uploaded_files or []:
+        path = Path(file_path)
+        files_to_process.append((path.name, path.read_text(encoding="utf-8")))
 
     if not files_to_process:
-        st.warning("Please paste some code or upload at least one .py file.")
-    else:
-        results_by_file = {}
-        with st.spinner(f"Agents are scanning and processing {len(files_to_process)} file(s)..."):
-            for file_name, source in files_to_process:
-                results_by_file[file_name] = process_codebase(
-                    source, file_name, use_docker, st.session_state.config
+        return "⚠️ Please paste some code or upload at least one `.py` file.", None
+
+    results_by_file = {
+        file_name: process_codebase(source, file_name, use_docker, config)
+        for file_name, source in files_to_process
+    }
+
+    total_smells = sum(len(r) for r in results_by_file.values())
+    if total_smells == 0:
+        return "✅ No structural code smells detected across all file(s). Your code is clean!", None
+
+    lines = [f"### 🔍 Found and processed {total_smells} code smell(s) across {len(files_to_process)} file(s)\n"]
+    for file_name, results in results_by_file.items():
+        if not results:
+            continue
+        lines.append(f"## 📄 `{file_name}`\n")
+        lines.extend(_render_result(i, res) for i, res in enumerate(results, 1))
+
+    non_empty_results = {name: results for name, results in results_by_file.items() if results}
+    REPORT_PATH.write_text(build_combined_markdown_report(non_empty_results), encoding="utf-8")
+
+    return "\n".join(lines), str(REPORT_PATH)
+
+
+def save_config(config_text: str):
+    try:
+        config = json.loads(config_text)
+    except json.JSONDecodeError as e:
+        return f"⚠️ Invalid JSON, not saved: {e}"
+    Path("config.json").write_text(json.dumps(config, indent=4), encoding="utf-8")
+    return "✅ Configuration saved!"
+
+
+with gr.Blocks(title="AST Refactor Bot") as demo:
+    gr.Markdown("# 🤖 Multi-Agent AST Auto-Refactorer")
+    gr.Markdown(
+        "Paste a Python snippet below, or upload one or more `.py` files, "
+        "to have the AI agents analyze, refactor, and validate them."
+    )
+
+    with gr.Row():
+        with gr.Column(scale=1):
+            gr.Markdown("### ⚙️ Configuration")
+            use_docker = gr.Checkbox(
+                label="Use Docker Sandbox",
+                value=False,
+                info="Requires Docker to be available in this environment.",
+            )
+            with gr.Accordion("Edit Configuration JSON", open=False):
+                config_box = gr.Code(
+                    value=json.dumps(load_config("config.json"), indent=4),
+                    language="json",
+                    label="Configuration (JSON)",
                 )
+                save_btn = gr.Button("Save Config to File")
+                save_status = gr.Markdown()
 
-        total_smells = sum(len(r) for r in results_by_file.values())
-
-        if total_smells == 0:
-            st.success("✅ No structural code smells detected across all file(s). Your code is clean!")
-        else:
-            st.success(f"🔍 Found and processed {total_smells} code smell(s) across {len(files_to_process)} file(s)!")
-
-            report_md = build_combined_markdown_report(
-                {name: results for name, results in results_by_file.items() if results}
+        with gr.Column(scale=2):
+            code_input = gr.Code(value="", label="Paste Python Code Here", language="python", lines=12)
+            uploaded_files = gr.File(
+                label="Or upload one or more .py files",
+                file_count="multiple",
+                file_types=[".py"],
             )
-            st.download_button(
-                "📄 Download Markdown Report",
-                data=report_md,
-                file_name="refactor_report.md",
-                mime="text/markdown",
-            )
+            analyze_btn = gr.Button("🚀 Analyze & Refactor", variant="primary")
 
-            for file_name, results in results_by_file.items():
-                if not results:
-                    continue
+    output_md = gr.Markdown()
+    report_file = gr.File(label="📄 Download Markdown Report")
 
-                st.markdown(f"### 📄 `{file_name}`")
-                for i, res in enumerate(results, 1):
-                    smell = res["smell"]
-                    refactor = res["refactor"]
-                    test = res["test"]
-                    validated = res.get("validated", False)
+    save_btn.click(fn=save_config, inputs=[config_box], outputs=[save_status])
+    analyze_btn.click(
+        fn=run_analysis,
+        inputs=[code_input, uploaded_files, use_docker, config_box],
+        outputs=[output_md, report_file],
+    )
 
-                    with st.expander(f"Issue {i}: {smell.issue_type} in `{smell.target_name}`", expanded=True):
-                        if validated:
-                            st.success("Validation Status: ✅ PASSED SANDBOX TESTS (Safe to apply)")
-                        else:
-                            st.error("Validation Status: ❌ FAILED SANDBOX TESTS (Refactor introduced errors)")
-
-                        col1, col2 = st.columns(2)
-
-                        with col1:
-                            st.subheader("Original Code")
-                            st.code(smell.raw_code, language="python")
-                            st.markdown(f"**AI Explanation:** {refactor.explanation}")
-
-                        with col2:
-                            st.subheader("Refactored Code")
-                            st.code(refactor.refactored_code, language="python")
-
-                        st.subheader("Generated Pytest Validations")
-                        st.code(test.pytest_code, language="python")
+if __name__ == "__main__":
+    demo.launch()

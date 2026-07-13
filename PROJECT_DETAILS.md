@@ -5,7 +5,7 @@
 All four roadmap phases below are implemented, dependency-installable
 (`requirements.txt` / `pyproject.toml`), and covered by an automated test
 suite (`tests/`, run in CI via `.github/workflows/ci.yml`). The `scan`
-command, the sandbox, and the Streamlit UI have been exercised directly
+command, the sandbox, and the Gradio UI have been exercised directly
 (not just read) to confirm they run without crashing. The one thing that
 has **not** been exercised end-to-end is the `fix` command against a real
 LLM — that requires a live `OPENAI_API_KEY` and real API spend, and was
@@ -101,7 +101,7 @@ Pattern-Recognition/
 │   ├── test_sandbox.py      # Real pytest execution in a temp dir (pass/fail/syntax-error cases)
 │   ├── test_agents.py       # Prompt-wiring checks with the LLM mocked out
 │   └── test_orchestrator.py # Full LangGraph flow with the LLM mocked out (incl. caching, retries)
-├── app.py                 # Streamlit UI
+├── app.py                 # Gradio UI (deployable as a Hugging Face Space)
 ├── .github/workflows/ci.yml  # Installs requirements.txt and runs pytest on push/PR
 ├── .env                   # Environment variables (e.g., API keys) — gitignored, not committed
 ├── config.json             # Default anti-pattern rule configuration
@@ -151,7 +151,7 @@ These were listed as "V2 & Beyond" ideas but are implemented in v1:
     refactor application.
 -   **Enhanced Security Sandboxing** — `core/sandbox.py` already supports a Docker-isolated sandbox
     (`--docker` CLI flag / "Use Docker Sandbox" in the UI).
--   **UI/Dashboard** — `app.py` is a working Streamlit UI (paste/upload code, edit config, view results).
+-   **UI/Dashboard** — `app.py` is a working Gradio UI (paste/upload code, edit config, view results), deployable directly as a Hugging Face Space.
 -   **Basic CI** — `.github/workflows/ci.yml` runs the test suite on every push/PR (though it doesn't yet
     run the tool's own `scan`/`fix` against itself — see below).
 
