@@ -19,6 +19,9 @@ dependencies = [
 docker = ["docker>=7.0"]
 ollama = ["langchain-ollama>=0.1"]
 dev = ["pytest>=7.4"]
+# Only needed when actually deployed to a Hugging Face ZeroGPU Space (app.py
+# imports it lazily); not required for local use.
+spaces = ["spaces>=0.30"]
 
 [project.scripts]
 ast-refactor = "agents.main:app"

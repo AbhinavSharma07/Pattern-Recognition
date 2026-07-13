@@ -3,6 +3,11 @@ from pathlib import Path
 
 import gradio as gr
 
+try:
+    import spaces
+except ImportError:
+    spaces = None
+
 from core.parser import load_config
 from agents.orchestrator import process_codebase
 from agents.main import build_combined_markdown_report
@@ -11,6 +16,20 @@ from dotenv import load_dotenv
 load_dotenv()
 
 REPORT_PATH = Path("refactor_report.md")
+
+
+if spaces is not None:
+    @spaces.GPU
+    def _zerogpu_startup_check():
+        """
+        This app never uses a GPU -- every LLM call goes to a remote provider
+        (Groq/OpenAI/Ollama) over HTTP. This function exists only because
+        Hugging Face's ZeroGPU hardware refuses to start a Space that has no
+        @spaces.GPU-decorated function at all, and ZeroGPU is the only
+        hardware tier available on this account (CPU Basic requires a PRO
+        subscription to switch to). It is never called.
+        """
+        return None
 
 
 def _render_result(i: int, res: dict) -> str:
