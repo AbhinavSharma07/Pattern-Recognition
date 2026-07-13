@@ -3,7 +3,7 @@ import sys
 import typer
 import difflib
 from pathlib import Path
-from typing import List
+from typing import Dict, List
 from core.parser import analyze_source_code, load_config
 from agents.orchestrator import process_codebase
 from dotenv import load_dotenv
@@ -147,26 +147,44 @@ def fix(
                 file_path.write_text(new_source, encoding="utf-8")
                 typer.secho(f"✅ Successfully applied {changes_applied} validated fix(es) directly to {file_path.name}!", fg=typer.colors.GREEN)
 
+def _render_result_section(res: dict) -> str:
+    """Renders a single smell/refactor/test result as a Markdown section."""
+    smell, refactor, test, validated = res["smell"], res["refactor"], res["test"], res.get("validated", False)
+    status = "✅ VALIDATED" if validated else "❌ FAILED TESTS"
+
+    diff = difflib.unified_diff(
+        smell.raw_code.splitlines(keepends=True),
+        refactor.refactored_code.splitlines(keepends=True),
+        fromfile='original', tofile='refactored',
+    )
+
+    return "\n".join([
+        f"## Target: `{smell.target_name}` ({status})",
+        f"**Issue Detected:** {smell.issue_type}\n\n### Explanation\n{refactor.explanation}\n",
+        f"### Code Diff\n```diff\n{''.join(diff)}\n```\n",
+        f"### Generated Test\n```python\n{test.pytest_code}\n```\n---\n",
+    ])
+
+
+def build_markdown_report(results: list) -> str:
+    """Builds a Markdown report string for a single file's worth of results."""
+    lines = ["# Refactoring Report\n"]
+    lines.extend(_render_result_section(res) for res in results)
+    return "\n".join(lines)
+
+
+def build_combined_markdown_report(results_by_file: Dict[str, list]) -> str:
+    """Builds one combined Markdown report covering multiple files' results (used by the Streamlit UI)."""
+    lines = ["# Refactoring Report\n"]
+    for file_name, results in results_by_file.items():
+        lines.append(f"# File: `{file_name}`\n")
+        lines.extend(_render_result_section(res) for res in results)
+    return "\n".join(lines)
+
+
 def generate_markdown_report(results: list, output_path: Path):
-    """Generates a comprehensive Markdown report of the AI's actions."""
-    lines = [f"# Refactoring Report\n"]
-    for res in results:
-        smell, refactor, test, validated = res["smell"], res["refactor"], res["test"], res.get("validated", False)
-        status = "✅ VALIDATED" if validated else "❌ FAILED TESTS"
-        
-        diff = difflib.unified_diff(
-            smell.raw_code.splitlines(keepends=True),
-            refactor.refactored_code.splitlines(keepends=True),
-            fromfile='original', tofile='refactored',
-        )
-        
-        lines.extend([
-            f"## Target: `{smell.target_name}` ({status})",
-            f"**Issue Detected:** {smell.issue_type}\n\n### Explanation\n{refactor.explanation}\n",
-            f"### Code Diff\n```diff\n{''.join(diff)}\n```\n",
-            f"### Generated Test\n```python\n{test.pytest_code}\n```\n---\n"
-        ])
-    output_path.write_text("\n".join(lines), encoding="utf-8")
+    """Generates a comprehensive Markdown report of the AI's actions and writes it to disk."""
+    output_path.write_text(build_markdown_report(results), encoding="utf-8")
 
 if __name__ == "__main__":
     app()
