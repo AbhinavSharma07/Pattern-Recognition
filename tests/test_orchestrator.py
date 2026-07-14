@@ -208,6 +208,38 @@ def test_process_codebase_reviewer_rejection_has_no_error_kind(tmp_path, monkeyp
     assert results[0]["error_kind"] is None
 
 
+def test_process_codebase_clears_stale_test_after_later_refactor_failure(tmp_path, monkeypatch):
+    """Regression test: if an earlier retry got as far as generating a test_proposal
+    (for a refactor that was then rejected), and a LATER retry's refactor step fails
+    outright, that stale test from the discarded attempt must not leak into the
+    final result -- it was written for a different, now-gone refactor proposal, and
+    showing it alongside "refactor generation failed" is misleading."""
+    monkeypatch.chdir(tmp_path)
+    calls = {"n": 0}
+
+    def flaky_refactor(file_name, source_code, smells, feedback, config):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return SAMPLE_REFACTOR
+        raise RuntimeError("Error code: 429 rate_limit_exceeded")
+
+    monkeypatch.setattr(orchestrator, "run_refactor_agent", flaky_refactor)
+    monkeypatch.setattr(orchestrator, "run_test_agent", lambda proposal, config: SAMPLE_TEST)
+    monkeypatch.setattr(
+        orchestrator, "run_reviewer_agent",
+        lambda source_code, smells, refactor, test, config: ReviewDecision(approved=False, feedback="Not good enough."),
+    )
+
+    results = orchestrator.process_codebase(SOURCE_WITH_SMELL, "bad.py", config={})
+
+    assert len(results) == 1
+    assert results[0]["validated"] is False
+    assert results[0]["stage"] == "refactor"
+    assert results[0]["error_kind"] == "api_error"
+    assert results[0]["test"] != SAMPLE_TEST
+    assert "No test could be generated" in results[0]["test"].pytest_code
+
+
 def test_classify_error_detects_api_signals():
     assert orchestrator._classify_error(RuntimeError("HTTP 429 Too Many Requests")) == "api_error"
     assert orchestrator._classify_error(RuntimeError("Rate limit exceeded")) == "api_error"

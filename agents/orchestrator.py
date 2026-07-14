@@ -82,6 +82,11 @@ def refactor_code_node(state: AgentGraphState) -> AgentGraphState:
     except Exception as e:
         print(f"[-] Refactor Agent failed: {e}")
         state.refactor_proposal = None
+        # A prior retry iteration may have gotten as far as generating a test_proposal
+        # (for a refactor that was then rejected/failed sandbox), which must not survive
+        # into this failed attempt -- it was written for a different, now-discarded
+        # refactor and would otherwise be shown alongside this attempt's placeholder.
+        state.test_proposal = None
         state.feedback = f"REFACTOR AGENT ERROR: {e}"
         state.error_kind = _classify_error(e)
         state.retries_left -= 1
