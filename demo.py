@@ -25,18 +25,19 @@ def process_user_data(a, b, c, d, e, f, g):
 """
 
 if __name__ == "__main__":
-    if not os.getenv("OPENAI_API_KEY"):
-        print("ERROR: OPENAI_API_KEY is not set. Please create a .env file and add your key.")
+    if not any(os.getenv(key) for key in ("GROQ_API_KEY", "OPENAI_API_KEY", "OLLAMA_API_KEY")):
+        print("ERROR: No LLM API key is set. Please create a .env file and add one (see README.md).")
     else:
-        print("Starting end-to-end Phase 2 test...\n")
-        # This will trigger the parser, the refactor LLM, and the testing LLM
+        print("Starting end-to-end demo...\n")
+        # This will trigger the parser and the full unified refactor -> test -> review -> sandbox pipeline
         results = process_codebase(SAMPLE_BAD_CODE, "bad_code.py")
-        
+
         for res in results:
             print("\n" + "="*60)
-            print(f"TARGET FUNCTION: {res['smell'].target_name}")
+            issues = ", ".join(f"{s.issue_type} in {s.target_name}" for s in res["smells"])
+            print(f"ISSUES ADDRESSED: {issues}")
             print("="*60)
-            print("\n[REFACTORED CODE PROPOSAL]")
+            print("\n[UNIFIED REFACTOR PROPOSAL]")
             print(res['refactor'].refactored_code)
             print("\n[GENERATED PYTEST PROPOSAL]")
             print(res['test'].pytest_code)
