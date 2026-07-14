@@ -45,16 +45,22 @@ if spaces is not None:
         return None
 
 
-def _render_result(i: int, res: dict) -> str:
-    smell, refactor, test = res["smell"], res["refactor"], res["test"]
+def _render_result(res: dict) -> str:
+    smells, refactor, test = res["smells"], res["refactor"], res["test"]
+    original_source = res.get("source_code", "")
     status = status_label(res)
 
+    issues_list = "\n".join(
+        f"- **{s.issue_type}** in `{s.target_name}` (line {s.line_number})" for s in smells
+    )
+
     return "\n".join([
-        f"### Issue {i}: {smell.issue_type} in `{smell.target_name}`",
+        f"### Unified Refactor — {len(smells)} issue(s) addressed",
         f"**Validation Status:** {status}\n",
+        f"**Issues Addressed:**\n{issues_list}\n",
         f"**AI Explanation:** {refactor.explanation}\n",
         "**Original Code**",
-        f"```python\n{smell.raw_code}\n```",
+        f"```python\n{original_source}\n```",
         "**Refactored Code**",
         f"```python\n{refactor.refactored_code}\n```",
         "**Generated Pytest Validation**",
@@ -97,7 +103,7 @@ def run_analysis(code_input: str, uploaded_files, use_docker: bool, config_text:
         for file_name, source in files_to_process
     }
 
-    total_smells = sum(len(r) for r in results_by_file.values())
+    total_smells = sum(len(r["smells"]) for results in results_by_file.values() for r in results)
     if total_smells == 0:
         return "✅ No structural code smells detected across all file(s). Your code is clean!", None
 
@@ -106,7 +112,7 @@ def run_analysis(code_input: str, uploaded_files, use_docker: bool, config_text:
         if not results:
             continue
         lines.append(f"## 📄 `{file_name}`\n")
-        lines.extend(_render_result(i, res) for i, res in enumerate(results, 1))
+        lines.extend(_render_result(res) for res in results)
 
     non_empty_results = {name: results for name, results in results_by_file.items() if results}
     REPORT_PATH.write_text(build_combined_markdown_report(non_empty_results), encoding="utf-8")

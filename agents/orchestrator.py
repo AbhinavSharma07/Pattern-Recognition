@@ -43,8 +43,18 @@ def _classify_error(e: Exception) -> str:
 
 # --- 1. Define the State for our Graph ---
 class AgentGraphState(BaseModel):
-    """Represents the state of our multi-agent workflow."""
-    smell: CodeSmell
+    """
+    Represents the state of our multi-agent workflow for a single file.
+
+    One unified refactor is produced per file, addressing every smell detected
+    in it at once -- not one independent refactor per smell. This avoids the
+    overlapping-edit conflicts that arise when several isolated per-smell
+    refactors touch the same region of a file, and gives a single, coherent,
+    reviewable diff per file instead of a pile of small ones.
+    """
+    file_name: str
+    source_code: str
+    smells: List[CodeSmell]
     refactor_proposal: Optional[RefactorProposal] = None
     test_proposal: Optional[TestCaseProposal] = None
     feedback: Optional[str] = None
@@ -64,11 +74,11 @@ class AgentGraphState(BaseModel):
 # failure as retryable feedback keeps one bad LLM response from crashing the
 # whole batch, instead of only doing so for the reviewer/sandbox-rejection path.
 def refactor_code_node(state: AgentGraphState) -> AgentGraphState:
-    """Node that runs the refactoring agent."""
-    print("[*] Refactor Agent is rewriting the code...")
+    """Node that runs the refactoring agent over the whole file and all its smells."""
+    print(f"[*] Refactor Agent is rewriting {state.file_name} to address {len(state.smells)} smell(s)...")
     state.stage = STAGE_REFACTOR
     try:
-        proposal = run_refactor_agent(state.smell, state.feedback, state.config)
+        proposal = run_refactor_agent(state.file_name, state.source_code, state.smells, state.feedback, state.config)
     except Exception as e:
         print(f"[-] Refactor Agent failed: {e}")
         state.refactor_proposal = None
@@ -108,7 +118,7 @@ def review_proposal_node(state: AgentGraphState) -> AgentGraphState:
     print("[*] Reviewer Agent is verifying the code and tests...")
     state.stage = STAGE_REVIEW
     try:
-        review = run_reviewer_agent(state.smell, state.refactor_proposal, state.test_proposal, state.config)
+        review = run_reviewer_agent(state.source_code, state.smells, state.refactor_proposal, state.test_proposal, state.config)
     except Exception as e:
         print(f"[-] Reviewer Agent failed: {e}")
         state.feedback = f"REVIEWER AGENT ERROR: {e}"
@@ -135,7 +145,7 @@ def sandbox_validation_node(state: AgentGraphState) -> AgentGraphState:
     if result["success"]:
         print("[+] Tests PASSED! Refactoring validated.\n")
         state.final_result = {
-            "smell": state.smell, "refactor": state.refactor_proposal, "test": state.test_proposal,
+            "smells": state.smells, "refactor": state.refactor_proposal, "test": state.test_proposal,
             "validated": True, "stage": STAGE_SANDBOX, "error_kind": None,
         }
     else:
@@ -144,7 +154,7 @@ def sandbox_validation_node(state: AgentGraphState) -> AgentGraphState:
         state.error_kind = None  # a genuine test failure -- tests did run
         state.retries_left -= 1
         state.final_result = {
-            "smell": state.smell, "refactor": state.refactor_proposal, "test": state.test_proposal,
+            "smells": state.smells, "refactor": state.refactor_proposal, "test": state.test_proposal,
             "validated": False, "stage": STAGE_SANDBOX, "error_kind": None,
         }
     return state
@@ -158,20 +168,32 @@ def process_codebase(
     cache_namespace: str = None,
 ) -> List[Dict[str, Any]]:
     """
-    Orchestrates the full flow: Parse -> Detect -> Refactor -> Test Generation
+    Orchestrates the full flow: Parse -> Detect all smells -> one unified
+    Refactor -> Test Generation -> Review -> Sandbox Validation, for the file
+    as a whole.
 
-    cache_namespace scopes the validated-result cache (e.g. to a browser
-    session hash in a multi-tenant web UI) so one caller's cached results
-    are never served to a different caller. Defaults to a shared namespace,
-    matching the original single-user CLI behavior.
+    Returns a list with either zero entries (no smells found) or exactly one
+    entry: the single consolidated result for this file, whose "smells" field
+    lists every anti-pattern the refactor was meant to address. (Kept as a
+    list, rather than returning the dict directly, so existing "for res in
+    results" callers iterating over a file's results didn't need to change
+    shape when this moved from one-result-per-smell to one-result-per-file.)
+
+    cache_namespace scopes the result cache (e.g. to a browser session hash in
+    a multi-tenant web UI) so one caller's cached results are never served to
+    a different caller. Defaults to a shared namespace, matching the original
+    single-user CLI behavior.
     """
 
     # --- Caching Setup ---
     CACHE_DIR = Path(".agent_cache") / (cache_namespace or "shared")
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-    def get_cache_key(smell):
-        return hashlib.sha256(f"{smell.issue_type}:{smell.raw_code}".encode()).hexdigest()
+    def get_cache_key(smells):
+        # Keyed on the whole file's content plus which issues were found in it,
+        # since the unified refactor addresses the file as a whole.
+        fingerprint = source_code + "|" + "|".join(f"{s.issue_type}:{s.raw_code}" for s in smells)
+        return hashlib.sha256(fingerprint.encode()).hexdigest()
 
     def get_from_cache(key):
         cache_file = CACHE_DIR / f"{key}.json"
@@ -179,31 +201,41 @@ def process_codebase(
             return None
         data = json.loads(cache_file.read_text())
         return {
-            "smell": CodeSmell(**data["smell"]),
+            "smells": [CodeSmell(**s) for s in data["smells"]],
             "refactor": RefactorProposal(**data["refactor"]),
             "test": TestCaseProposal(**data["test"]),
             "validated": data["validated"],
             "stage": data.get("stage"),
             "error_kind": data.get("error_kind"),
+            "source_code": data.get("source_code", ""),
         }
 
     def set_to_cache(key, data):
         serializable = {
-            "smell": data["smell"].model_dump(),
+            "smells": [s.model_dump() for s in data["smells"]],
             "refactor": data["refactor"].model_dump(),
             "test": data["test"].model_dump(),
             "validated": data["validated"],
             "stage": data.get("stage"),
             "error_kind": data.get("error_kind"),
+            "source_code": data.get("source_code", ""),
         }
         (CACHE_DIR / f"{key}.json").write_text(json.dumps(serializable, indent=2))
 
     print(f"[*] Analyzing {file_name} for code smells...")
     smells = analyze_source_code(source_code, file_name, config)
-    
+
     if not smells:
         print("[+] No code smells detected. Code is clean!")
         return []
+
+    print(f"[!] Found {len(smells)} code smell(s) in {file_name}. Starting AI agents for one unified refactor...\n")
+
+    cache_key = get_cache_key(smells)
+    cached_result = get_from_cache(cache_key)
+    if cached_result:
+        print("[*] Found validated result in cache. Skipping agent calls.")
+        return [cached_result]
 
     # --- 3. Build the LangGraph ---
     workflow = StateGraph(AgentGraphState)
@@ -239,47 +271,36 @@ def process_codebase(
     app = workflow.compile()
     # --- End of Graph Definition ---
 
-    print(f"[!] Found {len(smells)} code smell(s). Starting AI agents...\n")
-    
-    results = []
-    for i, smell in enumerate(smells, 1):
-        print(f"--- Processing Smell {i}/{len(smells)}: {smell.issue_type} in `{smell.target_name}` ---")
-        
-        cache_key = get_cache_key(smell)
-        cached_result = get_from_cache(cache_key)
-        
-        if cached_result:
-            print("[*] Found validated result in cache. Skipping agent calls.")
-            results.append(cached_result)
-            continue
+    initial_state = AgentGraphState(
+        file_name=file_name, source_code=source_code, smells=smells,
+        use_docker=use_docker, config=config,
+    )
+    final_state = app.invoke(initial_state)
+    result_data = final_state.get("final_result")
+    if not result_data:
+        # Max retries hit without ever reaching the sandbox (e.g. the LLM never
+        # produced a usable proposal). Fall back to placeholder objects rather than
+        # None, so report/UI/apply code downstream can keep assuming real objects.
+        error_note = final_state.get("feedback") or "Agent pipeline failed for an unknown reason."
+        refactor_proposal = final_state.get("refactor_proposal") or RefactorProposal(
+            original_function_name=file_name,
+            explanation=f"Refactoring failed after exhausting retries. Last error: {error_note}",
+            refactored_code=source_code,
+        )
+        test_proposal = final_state.get("test_proposal") or TestCaseProposal(
+            target_function_name=file_name,
+            pytest_code="# No test could be generated: the agent pipeline failed before reaching this step.",
+        )
+        result_data = {
+            "smells": smells, "refactor": refactor_proposal, "test": test_proposal, "validated": False,
+            "stage": final_state.get("stage"), "error_kind": final_state.get("error_kind"),
+        }
 
-        # Invoke the graph for the current smell
-        initial_state = AgentGraphState(smell=smell, use_docker=use_docker, config=config)
-        final_state = app.invoke(initial_state)
-        result_data = final_state.get("final_result")
-        if not result_data:
-            # Max retries hit without ever reaching the sandbox (e.g. the LLM never
-            # produced a usable proposal). Fall back to placeholder objects rather than
-            # None, so report/UI/apply code downstream can keep assuming real objects.
-            error_note = final_state.get("feedback") or "Agent pipeline failed for an unknown reason."
-            refactor_proposal = final_state.get("refactor_proposal") or RefactorProposal(
-                original_function_name=smell.target_name,
-                explanation=f"Refactoring failed after exhausting retries. Last error: {error_note}",
-                refactored_code=smell.raw_code,
-            )
-            test_proposal = final_state.get("test_proposal") or TestCaseProposal(
-                target_function_name=smell.target_name,
-                pytest_code="# No test could be generated: the agent pipeline failed before reaching this step.",
-            )
-            result_data = {
-                "smell": smell, "refactor": refactor_proposal, "test": test_proposal, "validated": False,
-                "stage": final_state.get("stage"), "error_kind": final_state.get("error_kind"),
-            }
-        results.append(result_data)
-        
-        # If successful, save the validated result to the cache
-        if result_data and result_data["validated"]:
-            set_to_cache(cache_key, result_data)
-        
-    print("[*] All detected smells have been processed by the multi-agent system.")
-    return results
+    result_data["source_code"] = source_code
+
+    # If successful, save the validated result to the cache
+    if result_data and result_data["validated"]:
+        set_to_cache(cache_key, result_data)
+
+    print("[*] File processed by the multi-agent system.")
+    return [result_data]

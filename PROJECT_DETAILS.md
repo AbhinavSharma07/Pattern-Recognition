@@ -142,13 +142,17 @@ Pattern-Recognition/
 ### Phase 4: CLI Polish & Reporting — ✅ Complete
 -   **Goal:** Create a user-friendly CLI and comprehensive reporting.
 -   Delivered: `agents/main.py` (`scan`, `fix --apply --report --docker --config`), Markdown diff reports via
-    `difflib`, `libcst`-based in-place refactor application (falls back to string replacement if libcst fails
-    to parse), and a `pyproject.toml` `[project.scripts]` entry (`ast-refactor`) for installed use.
+    `difflib`, whole-file refactor application (`--apply` writes the validated unified refactor directly --
+    see the "Unified Refactoring" note below), and a `pyproject.toml` `[project.scripts]` entry
+    (`ast-refactor`) for installed use.
 
 ## 6. Already Delivered Beyond the Original Roadmap
 These were listed as "V2 & Beyond" ideas but are implemented in v1:
--   **Advanced AST Modification** — `agents/main.py`'s `RefactorTransformer` uses `libcst` for in-place
-    refactor application.
+-   **Unified Per-File Refactoring** — each file gets exactly one consolidated refactor addressing every
+    smell detected in it, rather than one independent refactor per smell. This eliminates the overlapping-edit
+    conflicts the original per-smell design was prone to (and the libcst-based `RefactorTransformer` that used
+    to paper over them was removed as a result -- `--apply` is now a direct whole-file write of the validated
+    refactor).
 -   **Enhanced Security Sandboxing** — `core/sandbox.py` already supports a Docker-isolated sandbox
     (`--docker` CLI flag / "Use Docker Sandbox" in the UI).
 -   **UI/Dashboard** — `app.py` is a working Gradio UI (paste/upload code, edit config, view results), deployable directly as a Hugging Face Space.

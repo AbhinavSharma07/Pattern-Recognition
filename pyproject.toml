@@ -12,7 +12,6 @@ dependencies = [
     "langchain-community>=0.2",
     "langgraph>=0.1",
     "gradio>=4.44",
-    "libcst>=1.1",
 ]
 
 [project.optional-dependencies]

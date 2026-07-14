@@ -119,11 +119,12 @@ Running `ast-refactor scan example.py` reports every smell in it:
   5. list comprehension (Line 16): Complex List Comprehension
 ```
 
-Running `ast-refactor fix example.py --apply --report` sends each of those five
-smells through the full agent pipeline (refactor → generate tests → review →
-sandbox-validate) and, for every smell whose refactor actually passes its
-generated tests, applies the fix directly to `example.py` and writes a
-Markdown report of what changed and why.
+Running `ast-refactor fix example.py --apply --report` sends all five smells
+through the full agent pipeline as **one unified refactor** (refactor → generate
+tests → review → sandbox-validate) that addresses every issue in the file at
+once, rather than one independent refactor per smell -- if that refactor's
+tests pass, the whole file is updated in place and a Markdown report is
+written explaining every issue that was fixed.
 
 ## Running the Tests
 

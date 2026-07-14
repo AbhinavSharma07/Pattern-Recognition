@@ -44,7 +44,24 @@ def test_run_refactor_agent(monkeypatch):
     FakeChatModel.RESPONSES = {RefactorProposal: SAMPLE_REFACTOR}
     monkeypatch.setattr(llm_factory, "ChatOpenAI", FakeChatModel)
 
-    result = refactor_agent.run_refactor_agent(SAMPLE_SMELL, config={})
+    result = refactor_agent.run_refactor_agent("sample.py", SAMPLE_SMELL.raw_code, [SAMPLE_SMELL], config={})
+
+    assert result == SAMPLE_REFACTOR
+
+
+def test_run_refactor_agent_with_multiple_smells(monkeypatch):
+    """A file with several smells is bundled into one refactor call, not one per smell."""
+    FakeChatModel.RESPONSES = {RefactorProposal: SAMPLE_REFACTOR}
+    monkeypatch.setattr(llm_factory, "ChatOpenAI", FakeChatModel)
+
+    other_smell = CodeSmell(
+        file_name="sample.py", target_name="except block", line_number=5,
+        issue_type="Bare Except", raw_code="except:\n    pass\n",
+    )
+
+    result = refactor_agent.run_refactor_agent(
+        "sample.py", SAMPLE_SMELL.raw_code, [SAMPLE_SMELL, other_smell], config={}
+    )
 
     assert result == SAMPLE_REFACTOR
 
@@ -54,7 +71,8 @@ def test_run_refactor_agent_with_feedback(monkeypatch):
     monkeypatch.setattr(llm_factory, "ChatOpenAI", FakeChatModel)
 
     result = refactor_agent.run_refactor_agent(
-        SAMPLE_SMELL, feedback="tests failed: AssertionError", config={}
+        "sample.py", SAMPLE_SMELL.raw_code, [SAMPLE_SMELL],
+        feedback="tests failed: AssertionError", config={},
     )
 
     assert result == SAMPLE_REFACTOR
@@ -74,6 +92,8 @@ def test_run_reviewer_agent(monkeypatch):
     FakeChatModel.RESPONSES = {ReviewDecision: decision}
     monkeypatch.setattr(llm_factory, "ChatOpenAI", FakeChatModel)
 
-    result = reviewer_agent.run_reviewer_agent(SAMPLE_SMELL, SAMPLE_REFACTOR, SAMPLE_TEST, config={})
+    result = reviewer_agent.run_reviewer_agent(
+        SAMPLE_SMELL.raw_code, [SAMPLE_SMELL], SAMPLE_REFACTOR, SAMPLE_TEST, config={}
+    )
 
     assert result == decision
