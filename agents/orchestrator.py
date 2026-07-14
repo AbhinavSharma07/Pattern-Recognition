@@ -12,6 +12,35 @@ from agents.refactor_agent import run_refactor_agent
 from agents.test_agent import run_test_agent
 from agents.reviewer_agent import run_reviewer_agent
 
+# Failure-stage taxonomy for reporting: which stage the pipeline was in when it gave
+# up, distinct from the boolean "validated" (which only means "sandbox tests passed").
+# error_kind distinguishes a genuine API/transport problem from the model just
+# producing bad output, so a rate-limit error isn't misreported as "tests failed"
+# when no test ever ran.
+STAGE_REFACTOR = "refactor"
+STAGE_TEST_GENERATION = "test_generation"
+STAGE_REVIEW = "review"
+STAGE_SANDBOX = "sandbox"
+
+ERROR_KIND_API = "api_error"
+ERROR_KIND_GENERATION = "generation_error"
+
+_API_ERROR_SIGNALS = (
+    "rate limit", "rate_limit", "429", "quota", "insufficient_quota",
+    "timeout", "connection", "503", "502", "500", "unavailable",
+)
+
+
+def _classify_error(e: Exception) -> str:
+    """Best-effort classification of an agent-call exception, so the report can
+    say "API error" (transient/provider-side) rather than implying the model's
+    output itself was the problem."""
+    text = str(e).lower()
+    if any(signal in text for signal in _API_ERROR_SIGNALS):
+        return ERROR_KIND_API
+    return ERROR_KIND_GENERATION
+
+
 # --- 1. Define the State for our Graph ---
 class AgentGraphState(BaseModel):
     """Represents the state of our multi-agent workflow."""
@@ -19,10 +48,12 @@ class AgentGraphState(BaseModel):
     refactor_proposal: Optional[RefactorProposal] = None
     test_proposal: Optional[TestCaseProposal] = None
     feedback: Optional[str] = None
+    stage: Optional[str] = None       # last stage attempted: refactor/test_generation/review/sandbox
+    error_kind: Optional[str] = None  # api_error/generation_error, or None if no system error occurred
     retries_left: int = 2
     use_docker: bool = False
     config: Dict[str, Any]
-    
+
     # The final validated result
     final_result: Optional[Dict] = None
 
@@ -35,17 +66,20 @@ class AgentGraphState(BaseModel):
 def refactor_code_node(state: AgentGraphState) -> AgentGraphState:
     """Node that runs the refactoring agent."""
     print("[*] Refactor Agent is rewriting the code...")
+    state.stage = STAGE_REFACTOR
     try:
         proposal = run_refactor_agent(state.smell, state.feedback, state.config)
     except Exception as e:
         print(f"[-] Refactor Agent failed: {e}")
         state.refactor_proposal = None
         state.feedback = f"REFACTOR AGENT ERROR: {e}"
+        state.error_kind = _classify_error(e)
         state.retries_left -= 1
         return state
     print(f"[+] Refactoring complete. Explanation: {proposal.explanation}")
     state.refactor_proposal = proposal
     state.feedback = None
+    state.error_kind = None
     return state
 
 def generate_tests_node(state: AgentGraphState) -> AgentGraphState:
@@ -53,15 +87,18 @@ def generate_tests_node(state: AgentGraphState) -> AgentGraphState:
     if state.refactor_proposal is None:
         return state  # A previous step already failed; nothing to generate tests for.
     print("[*] Test Agent is generating unit tests...")
+    state.stage = STAGE_TEST_GENERATION
     try:
         proposal = run_test_agent(state.refactor_proposal, state.config)
     except Exception as e:
         print(f"[-] Test Agent failed: {e}")
         state.test_proposal = None
         state.feedback = f"TEST AGENT ERROR: {e}"
+        state.error_kind = _classify_error(e)
         state.retries_left -= 1
         return state
     state.test_proposal = proposal
+    state.error_kind = None
     return state
 
 def review_proposal_node(state: AgentGraphState) -> AgentGraphState:
@@ -69,35 +106,47 @@ def review_proposal_node(state: AgentGraphState) -> AgentGraphState:
     if state.refactor_proposal is None or state.test_proposal is None:
         return state  # A previous step already failed; nothing to review.
     print("[*] Reviewer Agent is verifying the code and tests...")
+    state.stage = STAGE_REVIEW
     try:
         review = run_reviewer_agent(state.smell, state.refactor_proposal, state.test_proposal, state.config)
     except Exception as e:
         print(f"[-] Reviewer Agent failed: {e}")
         state.feedback = f"REVIEWER AGENT ERROR: {e}"
+        state.error_kind = _classify_error(e)
         state.retries_left -= 1
         return state
     if not review.approved:
         print(f"[-] Reviewer REJECTED: {review.feedback}. Retrying...")
         state.feedback = f"REVIEWER FEEDBACK: {review.feedback}"
+        state.error_kind = None  # a legitimate rejection, not a system/API error
         state.retries_left -= 1
     else:
         print(f"[+] Reviewer APPROVED: {review.feedback}")
         state.feedback = None # Clear feedback on approval
+        state.error_kind = None
     return state
 
 def sandbox_validation_node(state: AgentGraphState) -> AgentGraphState:
     """Node that runs the sandbox validation."""
     print(f"[*] Running tests in isolated sandbox (Docker: {state.use_docker})...")
+    state.stage = STAGE_SANDBOX
     result = execute_tests(state.refactor_proposal.refactored_code, state.test_proposal.pytest_code, state.use_docker)
-    
+
     if result["success"]:
         print("[+] Tests PASSED! Refactoring validated.\n")
-        state.final_result = {"smell": state.smell, "refactor": state.refactor_proposal, "test": state.test_proposal, "validated": True}
+        state.final_result = {
+            "smell": state.smell, "refactor": state.refactor_proposal, "test": state.test_proposal,
+            "validated": True, "stage": STAGE_SANDBOX, "error_kind": None,
+        }
     else:
         print(f"[-] Tests FAILED. Extracting feedback for retry...")
         state.feedback = result["output"]
+        state.error_kind = None  # a genuine test failure -- tests did run
         state.retries_left -= 1
-        state.final_result = {"smell": state.smell, "refactor": state.refactor_proposal, "test": state.test_proposal, "validated": False}
+        state.final_result = {
+            "smell": state.smell, "refactor": state.refactor_proposal, "test": state.test_proposal,
+            "validated": False, "stage": STAGE_SANDBOX, "error_kind": None,
+        }
     return state
 
 
@@ -134,6 +183,8 @@ def process_codebase(
             "refactor": RefactorProposal(**data["refactor"]),
             "test": TestCaseProposal(**data["test"]),
             "validated": data["validated"],
+            "stage": data.get("stage"),
+            "error_kind": data.get("error_kind"),
         }
 
     def set_to_cache(key, data):
@@ -142,6 +193,8 @@ def process_codebase(
             "refactor": data["refactor"].model_dump(),
             "test": data["test"].model_dump(),
             "validated": data["validated"],
+            "stage": data.get("stage"),
+            "error_kind": data.get("error_kind"),
         }
         (CACHE_DIR / f"{key}.json").write_text(json.dumps(serializable, indent=2))
 
@@ -218,7 +271,10 @@ def process_codebase(
                 target_function_name=smell.target_name,
                 pytest_code="# No test could be generated: the agent pipeline failed before reaching this step.",
             )
-            result_data = {"smell": smell, "refactor": refactor_proposal, "test": test_proposal, "validated": False}
+            result_data = {
+                "smell": smell, "refactor": refactor_proposal, "test": test_proposal, "validated": False,
+                "stage": final_state.get("stage"), "error_kind": final_state.get("error_kind"),
+            }
         results.append(result_data)
         
         # If successful, save the validated result to the cache

@@ -205,10 +205,47 @@ def apply_validated_fixes(source_code: str, results: list) -> tuple:
 
     return new_source, changes_applied
 
+_STAGE_LABELS = {
+    "refactor": "Refactor Generation",
+    "test_generation": "Test Generation",
+    "review": "Code Review",
+    "sandbox": "Sandbox Validation",
+}
+
+
+def status_label(res: dict) -> str:
+    """
+    Renders a precise status for a single result, distinguishing:
+    - VALIDATED: sandbox tests actually ran and passed.
+    - VALIDATION FAILED: sandbox tests actually ran and failed.
+    - REJECTED BY REVIEWER: the reviewer declined it; never reached the sandbox.
+    - API ERROR during <stage>: a provider/transport error (rate limit, timeout,
+      connection error, ...) -- the model/pipeline never got a real chance.
+    - <STAGE> FAILED: the model produced unusable output at that stage (e.g. bad
+      structured output) -- distinct from an API error, and distinct from a test
+      that actually ran and failed.
+    """
+    if res.get("validated", False):
+        return "✅ VALIDATED (sandbox tests passed)"
+
+    stage = res.get("stage")
+    error_kind = res.get("error_kind")
+
+    if stage == "sandbox":
+        return "❌ VALIDATION FAILED (generated tests ran and failed)"
+    if stage == "review" and error_kind is None:
+        return "⚠️ REJECTED BY REVIEWER (never reached sandbox validation)"
+    if error_kind == "api_error":
+        return f"🔌 API ERROR during {_STAGE_LABELS.get(stage, 'processing')} (validation skipped)"
+    if stage in _STAGE_LABELS:
+        return f"⚠️ {_STAGE_LABELS[stage].upper()} FAILED (validation skipped)"
+    return "❌ VALIDATION SKIPPED (pipeline did not complete)"
+
+
 def _render_result_section(res: dict) -> str:
     """Renders a single smell/refactor/test result as a Markdown section."""
-    smell, refactor, test, validated = res["smell"], res["refactor"], res["test"], res.get("validated", False)
-    status = "✅ VALIDATED" if validated else "❌ FAILED TESTS"
+    smell, refactor, test = res["smell"], res["refactor"], res["test"]
+    status = status_label(res)
 
     diff = difflib.unified_diff(
         smell.raw_code.splitlines(keepends=True),

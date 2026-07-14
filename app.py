@@ -11,7 +11,7 @@ except ImportError:
 
 from core.parser import load_config
 from agents.orchestrator import process_codebase
-from agents.main import build_combined_markdown_report
+from agents.main import build_combined_markdown_report, status_label
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -47,8 +47,7 @@ if spaces is not None:
 
 def _render_result(i: int, res: dict) -> str:
     smell, refactor, test = res["smell"], res["refactor"], res["test"]
-    validated = res.get("validated", False)
-    status = "✅ PASSED SANDBOX TESTS (Safe to apply)" if validated else "❌ FAILED SANDBOX TESTS (Refactor introduced errors)"
+    status = status_label(res)
 
     return "\n".join([
         f"### Issue {i}: {smell.issue_type} in `{smell.target_name}`",

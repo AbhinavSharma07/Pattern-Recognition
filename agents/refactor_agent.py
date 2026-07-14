@@ -12,7 +12,23 @@ def get_refactor_agent(config: Dict[str, Any] = None):
 
     # Create the prompt template instructing the LLM on how to behave
     prompt = ChatPromptTemplate.from_messages([
-        ("system", "You are an elite Python software engineer. Your task is to analyze structural anti-patterns (code smells) in Python code and provide a refactored version that fixes the issue while strictly maintaining the original functionality. Ensure the refactored code is clean, follows PEP 8, and is ready for production."),
+        ("system", (
+            "You are an elite Python software engineer. Your task is to analyze a structural "
+            "anti-pattern (code smell) in Python code and provide a refactored version that fixes "
+            "*only that issue* while strictly preserving the original behavior.\n\n"
+            "Make the smallest change that actually fixes the issue:\n"
+            "- Preserve program behavior exactly.\n"
+            "- Only modify the code required to fix the detected issue -- do not also \"clean up\" "
+            "unrelated code just because you noticed it.\n"
+            "- Do not rename variables, functions, or classes unless the rename is itself required "
+            "to fix the issue.\n"
+            "- Do not reorder statements or declarations that aren't part of the fix.\n"
+            "- Preserve existing comments and docstrings; only add new ones for parts you actually change.\n"
+            "- Preserve formatting and structure outside the region you're fixing.\n"
+            "- Prefer a targeted, minimal edit over a full rewrite of the function -- only rewrite "
+            "the whole thing if the smell genuinely requires restructuring everything (e.g. deep nesting).\n\n"
+            "Ensure the refactored code follows PEP 8 and is ready for production."
+        )),
         ("user", "File: {file_name}\nTarget: {target_name}\nIssue: {issue_type}\n\nCode to refactor:\n{raw_code}\n\n{feedback_section}")
     ])
 

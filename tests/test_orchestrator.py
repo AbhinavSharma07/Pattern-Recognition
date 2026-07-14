@@ -114,6 +114,9 @@ def test_process_codebase_retries_then_gives_up(tmp_path, monkeypatch):
 
     assert len(results) == 1
     assert results[0]["validated"] is False
+    # Reached the sandbox and the generated tests genuinely failed -- not an API/generation error.
+    assert results[0]["stage"] == "sandbox"
+    assert results[0]["error_kind"] is None
 
 
 def test_process_codebase_survives_refactor_agent_exception(tmp_path, monkeypatch):
@@ -133,3 +136,46 @@ def test_process_codebase_survives_refactor_agent_exception(tmp_path, monkeypatc
     assert results[0]["validated"] is False
     assert "Invalid json output" in results[0]["refactor"].explanation
     assert results[0]["test"].pytest_code  # placeholder test proposal, not None
+    assert results[0]["stage"] == "refactor"
+    assert results[0]["error_kind"] == "generation_error"
+
+
+def test_process_codebase_classifies_rate_limit_as_api_error(tmp_path, monkeypatch):
+    """A provider rate-limit/transport error must be distinguishable from the model
+    just producing unusable output -- it never got a real chance to generate."""
+    monkeypatch.chdir(tmp_path)
+
+    def rate_limited(smell, feedback, config):
+        raise RuntimeError("Error code: 429 - rate_limit_exceeded, please try again later")
+
+    monkeypatch.setattr(orchestrator, "run_refactor_agent", rate_limited)
+
+    results = orchestrator.process_codebase(SOURCE_WITH_SMELL, "bad.py", config={})
+
+    assert results[0]["stage"] == "refactor"
+    assert results[0]["error_kind"] == "api_error"
+
+
+def test_process_codebase_reviewer_rejection_has_no_error_kind(tmp_path, monkeypatch):
+    """A reviewer rejecting a proposal is a legitimate outcome, not a system error --
+    it must not be misreported as an API/generation error."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(orchestrator, "run_refactor_agent", lambda smell, feedback, config: SAMPLE_REFACTOR)
+    monkeypatch.setattr(orchestrator, "run_test_agent", lambda proposal, config: SAMPLE_TEST)
+    monkeypatch.setattr(
+        orchestrator, "run_reviewer_agent",
+        lambda smell, refactor, test, config: ReviewDecision(approved=False, feedback="Not good enough."),
+    )
+
+    results = orchestrator.process_codebase(SOURCE_WITH_SMELL, "bad.py", config={})
+
+    assert results[0]["validated"] is False
+    assert results[0]["stage"] == "review"
+    assert results[0]["error_kind"] is None
+
+
+def test_classify_error_detects_api_signals():
+    assert orchestrator._classify_error(RuntimeError("HTTP 429 Too Many Requests")) == "api_error"
+    assert orchestrator._classify_error(RuntimeError("Rate limit exceeded")) == "api_error"
+    assert orchestrator._classify_error(RuntimeError("Connection timeout")) == "api_error"
+    assert orchestrator._classify_error(ValueError("Invalid json output: garbage")) == "generation_error"
