@@ -1,17 +1,17 @@
 # Project Details: Multi-Agent AST Pattern Analyzer & Auto-Refactorer
 
-## 0. Status: Feature-complete (v1)
+## 0. Status: Feature-complete (v1), deployed
 
 All four roadmap phases below are implemented, dependency-installable
 (`requirements.txt` / `pyproject.toml`), and covered by an automated test
 suite (`tests/`, run in CI via `.github/workflows/ci.yml`). The `scan`
 command, the sandbox, and the Gradio UI have been exercised directly
-(not just read) to confirm they run without crashing. The one thing that
-has **not** been exercised end-to-end is the `fix` command against a real
-LLM — that requires a live `OPENAI_API_KEY` and real API spend, and was
-instead verified by mocking the LLM calls in `tests/test_agents.py` and
-`tests/test_orchestrator.py` to confirm the LangChain/LangGraph wiring
-(prompt variables, structured-output schemas, retry/cache logic) is correct.
+(not just read) to confirm they run without crashing. The `fix` command
+**has** since been exercised end-to-end against a real LLM (Groq, via
+`agents/llm_factory.py`) in addition to the mocked-LLM coverage in
+`tests/test_agents.py` and `tests/test_orchestrator.py`. The app is also
+deployed as a public Hugging Face Space (Gradio SDK, ZeroGPU-compatible
+startup check in `app.py`).
 
 ## 1. Project Overview
 
@@ -32,16 +32,28 @@ The system is designed with a modular architecture, divided into three primary p
 
 1.  **Static Analysis Engine:**
     -   **Purpose:** Parses raw Python files into Abstract Syntax Trees (ASTs).
-    -   **Functionality:** Identifies predefined "code smells" (e.g., excessive function arguments, deep nesting, bare `except` clauses).
+    -   **Functionality:** Identifies predefined "code smells" (e.g., excessive function arguments, deep
+        nesting, bare `except` clauses, a heuristic "potential infinite loop" check). Each smell carries a
+        deterministic, AST-derived `reason` string and is classified into a severity (`core/severity.py`:
+        Critical/High/Medium/Low) used to sort the smells list most-severe-first before refactoring.
     -   **Output:** Extracts the problematic code context into structured `CodeSmell` data objects.
+    -   **Metrics:** `core/metrics.py` independently computes deterministic AST metrics (cyclomatic
+        complexity, max nesting depth, function/argument counts, LOC, etc.) for a before/after comparison
+        table in every report — not tied to smell detection, just a structural snapshot of the file.
 
 2.  **Agent Orchestration Layer:**
     -   **Purpose:** Manages the interaction and workflow between various AI agents.
-    -   **Framework:** Utilizes LangChain (or LangGraph for more complex, cyclic agent workflows).
+    -   **Framework:** Utilizes LangGraph (`agents/orchestrator.py`'s `StateGraph`) for the cyclic
+        refactor/retry workflow.
     -   **Agents:**
-        -   **Refactor Agent:** Takes a `CodeSmell` object and generates a `RefactorProposal` (refactored code, explanation, new imports) using an LLM with structured outputs.
+        -   **Refactor Agent:** Takes all `CodeSmell`s detected in a file (severity-sorted) and generates a
+            single `RefactorProposal` (refactored code, explanation, new imports) addressing every issue in
+            that file at once ("unified refactoring" — see section 6), using an LLM with structured outputs.
         -   **Test Agent:** Takes the `RefactorProposal` and generates a `TestCaseProposal` (pytest code) using an LLM with structured outputs.
-        -   **Reviewer Agent (Future):** An optional agent to review refactors or test cases before execution.
+        -   **Reviewer Agent:** An LLM gatekeeper that approves/rejects a refactor+test pair before it ever reaches the sandbox.
+    -   **LLM Backends:** `agents/llm_factory.py` builds the chat model per `config.json`'s `llm_backend`
+        (OpenAI, Ollama, or Groq — Groq needs `method="function_calling"` for structured output since its
+        strict `json_schema` mode rejects some models).
 
 3.  **Sandbox Validation Engine:**
     -   **Purpose:** Safely executes the refactored code and its generated tests.
@@ -59,7 +71,9 @@ The system is designed with a modular architecture, divided into three primary p
 -   **`pydantic`**: Essential for data validation and defining structured outputs for the LLMs, ensuring agents return data in a predictable format.
 
 ### LLM Provider Integrations
--   **`langchain-openai`**: Specific package for interacting with OpenAI models (e.g., GPT-4, GPT-3.5-turbo) as our primary LLM backend.
+-   **`langchain-openai`**: Interacts with OpenAI models, and also with Groq's OpenAI-compatible endpoint
+    (`agents/llm_factory.py` points the same client at Groq's base URL when configured).
+-   **`langchain-ollama`**: Optional local/self-hosted backend.
 -   **`python-dotenv`**: To securely load API keys and other environment variables from a `.env` file, keeping sensitive information out of the codebase.
 
 ### Static Analysis
@@ -86,25 +100,36 @@ Python 3.10+). There is no separate `cli/` package — the Typer CLI lives in
 ```
 Pattern-Recognition/
 ├── core/
-│   ├── parser.py          # AntiPatternVisitor: AST-based code smell detection
+│   ├── parser.py          # AntiPatternVisitor: AST-based code smell detection (incl. reason text,
+│   │                      # infinite-loop heuristic); delegates nesting-depth math to metrics.py
+│   ├── metrics.py         # Deterministic AST metrics (complexity, nesting depth, LOC, etc.) for reports
+│   ├── severity.py        # Issue-type -> severity (Critical/High/Medium/Low) lookup + sort key
 │   ├── schemas.py         # Pydantic models (CodeSmell, RefactorProposal, TestCaseProposal)
 │   └── sandbox.py         # Isolated pytest execution (subprocess, optional Docker)
 ├── agents/
 │   ├── orchestrator.py    # LangGraph workflow: refactor -> test -> review -> sandbox,
-│   │                      # with retry-on-failure and validated-result caching
-│   ├── refactor_agent.py  # LLM chain: CodeSmell -> RefactorProposal
+│   │                      # with retry-on-failure, severity-sorted smells, and validated-result caching
+│   ├── llm_factory.py     # Builds the chat model per config.json's llm_backend (OpenAI/Ollama/Groq)
+│   ├── refactor_agent.py  # LLM chain: CodeSmell(s) -> RefactorProposal
 │   ├── test_agent.py      # LLM chain: RefactorProposal -> TestCaseProposal
 │   ├── reviewer_agent.py  # LLM gatekeeper: approves/rejects a refactor+test pair pre-sandbox
-│   └── main.py            # Typer CLI entry point (`scan`, `fix --apply --report --docker`)
+│   └── main.py            # Typer CLI entry point (`scan`, `fix --apply --report --docker`) +
+│                           # shared report rendering (execution trace, metrics table, status label)
 ├── tests/
-│   ├── test_parser.py       # Built-in + custom-rule smell detection
+│   ├── test_parser.py       # Built-in + custom-rule smell detection, reason text, infinite-loop heuristic
+│   ├── test_metrics.py      # core/metrics.py AST metrics
+│   ├── test_severity.py     # core/severity.py lookup + sort order
 │   ├── test_sandbox.py      # Real pytest execution in a temp dir (pass/fail/syntax-error cases)
 │   ├── test_agents.py       # Prompt-wiring checks with the LLM mocked out
-│   └── test_orchestrator.py # Full LangGraph flow with the LLM mocked out (incl. caching, retries)
-├── app.py                 # Gradio UI (deployable as a Hugging Face Space)
+│   ├── test_llm_factory.py  # Per-provider chat model construction (OpenAI/Ollama/Groq)
+│   ├── test_orchestrator.py # Full LangGraph flow with the LLM mocked out (incl. caching, retries, severity sort)
+│   ├── test_reporting.py    # Shared report-rendering helpers (status_label, execution trace, metrics table)
+│   ├── test_apply.py        # apply_validated_fixes: whole-file write of the validated unified refactor
+│   └── test_app.py          # Gradio app.py: run_analysis/save_config, HF-Space gating, session cache scoping
+├── app.py                 # Gradio UI (deployed as a Hugging Face Space; ZeroGPU startup no-op)
 ├── .github/workflows/ci.yml  # Installs requirements.txt and runs pytest on push/PR
 ├── .env                   # Environment variables (e.g., API keys) — gitignored, not committed
-├── config.json             # Default anti-pattern rule configuration
+├── config.json             # Default anti-pattern rule configuration + llm_backend selection
 ├── pyproject.toml          # Project metadata, dependencies, [project.scripts], tool config
 ├── requirements.txt         # Pinned dependency list for `pip install -r`
 ├── PROJECT_DETAILS.md       # This document
@@ -154,18 +179,31 @@ These were listed as "V2 & Beyond" ideas but are implemented in v1:
     to paper over them was removed as a result -- `--apply` is now a direct whole-file write of the validated
     refactor).
 -   **Enhanced Security Sandboxing** — `core/sandbox.py` already supports a Docker-isolated sandbox
-    (`--docker` CLI flag / "Use Docker Sandbox" in the UI).
--   **UI/Dashboard** — `app.py` is a working Gradio UI (paste/upload code, edit config, view results), deployable directly as a Hugging Face Space.
+    (`--docker` CLI flag / "Use Docker Sandbox" in the UI; forced off automatically on Hugging Face Spaces,
+    which have no Docker daemon).
+-   **UI/Dashboard** — `app.py` is a working Gradio UI (paste/upload code, edit config, view results),
+    deployed as a public Hugging Face Space. Per-visitor state (config edits, cached results) is scoped to
+    the Gradio session hash so one visitor's data is never served to another.
 -   **Basic CI** — `.github/workflows/ci.yml` runs the test suite on every push/PR (though it doesn't yet
     run the tool's own `scan`/`fix` against itself — see below).
+-   **Additional LLM Backend (Groq)** — `agents/llm_factory.py` supports Groq (OpenAI-compatible endpoint)
+    as a free-tier alternative to OpenAI, in addition to Ollama.
+-   **Severity Levels, Reasons & AST Metrics** — every `CodeSmell` now carries a deterministic `reason`
+    string (`core/parser.py`) and a severity classification (`core/severity.py`) used to sort the smells
+    list most-severe-first before refactoring. Every report includes a before/after AST metrics table
+    (`core/metrics.py`) and a step-by-step agent execution trace (`agents/main.py:build_execution_trace`).
+-   **Potential-Infinite-Loop Heuristic** — `core/parser.py`'s `visit_While` flags `while` loops whose
+    condition variable is never unconditionally updated in the loop body. This is a best-effort heuristic,
+    not a soundness guarantee (loop termination is undecidable in general per Rice's theorem), and is always
+    reported as "Potential", never asserted as fact.
 
 ## 7. Genuinely Open (V2 & Beyond)
 -   **Custom Anti-Pattern Rules:** `config.json` already supports user-defined `Call`/`Import`/`Decorator`
     rules; adding entirely new rule *categories* (beyond those three) still requires editing `core/parser.py`.
--   **Multi-File Refactoring:** Agents still operate on one smell/file at a time; no cross-file awareness.
+-   **Multi-File Refactoring:** Agents still operate on one file at a time (unified across smells within
+    that file); no cross-file awareness.
 -   **Deeper CI/CD Integration:** Running the refactor bot itself (not just its test suite) as a PR check.
--   **Additional LLM Backends:** Google Gemini / Anthropic Claude are not wired up (OpenAI + Ollama only).
--   **Live end-to-end verification:** The `fix` command has never been run against a real LLM in this
-    project's history — only with the LLM mocked. Recommended before relying on it in production.
+-   **Additional LLM Backends:** Google Gemini / Anthropic Claude are not wired up (OpenAI, Ollama, and Groq
+    only).
 
 ---

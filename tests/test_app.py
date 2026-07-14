@@ -13,6 +13,7 @@ SAMPLE_RESULT = {
     "test": TestCaseProposal(target_function_name="f", pytest_code="def test_f():\n    pass\n"),
     "validated": True,
     "source_code": SOURCE_WITH_SMELL,
+    "config": {},
 }
 
 

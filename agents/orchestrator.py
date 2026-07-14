@@ -8,6 +8,7 @@ from langgraph.graph import StateGraph, END
 from core.parser import analyze_source_code
 from core.sandbox import execute_tests
 from core.schemas import CodeSmell, RefactorProposal, TestCaseProposal
+from core.severity import severity_sort_key
 from agents.refactor_agent import run_refactor_agent
 from agents.test_agent import run_test_agent
 from agents.reviewer_agent import run_reviewer_agent
@@ -213,6 +214,7 @@ def process_codebase(
             "stage": data.get("stage"),
             "error_kind": data.get("error_kind"),
             "source_code": data.get("source_code", ""),
+            "config": data.get("config", {}),
         }
 
     def set_to_cache(key, data):
@@ -224,11 +226,15 @@ def process_codebase(
             "stage": data.get("stage"),
             "error_kind": data.get("error_kind"),
             "source_code": data.get("source_code", ""),
+            "config": data.get("config", {}),
         }
         (CACHE_DIR / f"{key}.json").write_text(json.dumps(serializable, indent=2))
 
     print(f"[*] Analyzing {file_name} for code smells...")
     smells = analyze_source_code(source_code, file_name, config)
+    # Address the most severe issues first in the refactor prompt -- there's no
+    # separate "Planner Agent" call, so this ordering is the prioritization step.
+    smells.sort(key=lambda s: severity_sort_key(s.issue_type))
 
     if not smells:
         print("[+] No code smells detected. Code is clean!")
@@ -302,6 +308,7 @@ def process_codebase(
         }
 
     result_data["source_code"] = source_code
+    result_data["config"] = config or {}
 
     # If successful, save the validated result to the cache
     if result_data and result_data["validated"]:

@@ -122,20 +122,25 @@ def process_user_data(a, b, c, d, e, f, g):
 Running `ast-refactor scan example.py` reports every smell in it:
 
 ```
-⚠️ Found 5 code smell(s) in example.py:
+⚠️ Found 6 code smell(s) in example.py:
   1. process_user_data (Line 3): Too Many Arguments
   2. process_user_data (Line 3): Excessive Nesting Depth
-  3. os.system (Line 12): Discouraged 'os.system' call
-  4. except Exception block (Line 13): Generic Exception
-  5. list comprehension (Line 16): Complex List Comprehension
+  3. while loop (Line 6): Potential Infinite Loop
+  4. os.system (Line 12): Discouraged 'os.system' call
+  5. except Exception block (Line 13): Generic Exception
+  6. list comprehension (Line 16): Complex List Comprehension
 ```
 
-Running `ast-refactor fix example.py --apply --report` sends all five smells
+Running `ast-refactor fix example.py --apply --report` sends all six smells
 through the full agent pipeline as **one unified refactor** (refactor → generate
 tests → review → sandbox-validate) that addresses every issue in the file at
 once, rather than one independent refactor per smell -- if that refactor's
 tests pass, the whole file is updated in place and a Markdown report is
-written explaining every issue that was fixed.
+written explaining every issue that was fixed. Before generating the refactor,
+the smells are sorted most-severe-first (e.g. a potential infinite loop is
+addressed before a cosmetic list-comprehension nit); the report also includes
+an AST-derived metrics table (before/after complexity, nesting depth, argument
+counts, etc.) and a step-by-step execution trace of what each agent did.
 
 ## Running the Tests
 

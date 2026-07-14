@@ -5,6 +5,10 @@ def smell_types(source, config=None):
     return [s.issue_type for s in analyze_source_code(source, "test.py", config or DEFAULT_CONFIG)]
 
 
+def smells_by_type(source, issue_type, config=None):
+    return [s for s in analyze_source_code(source, "test.py", config or DEFAULT_CONFIG) if s.issue_type == issue_type]
+
+
 def test_too_many_arguments():
     source = "def f(a, b, c, d, e, f):\n    pass\n"
     assert "Too Many Arguments" in smell_types(source)
@@ -129,3 +133,64 @@ def test_load_config_reads_existing_file(tmp_path):
     config_file.write_text('{"max_arguments": 2}', encoding="utf-8")
     config = load_config(str(config_file))
     assert config == {"max_arguments": 2}
+
+
+def test_too_many_arguments_has_reason():
+    source = "def f(a, b, c, d, e, f):\n    pass\n"
+    smell = smells_by_type(source, "Too Many Arguments")[0]
+    assert "6" in smell.reason
+    assert "5" in smell.reason
+
+
+def test_excessive_nesting_has_reason():
+    source = (
+        "def f():\n"
+        "    if True:\n"
+        "        for i in range(1):\n"
+        "            while True:\n"
+        "                if True:\n"
+        "                    pass\n"
+    )
+    smell = smells_by_type(source, "Excessive Nesting Depth")[0]
+    assert "4" in smell.reason and "3" in smell.reason
+
+
+def test_infinite_loop_flagged_when_var_only_conditionally_updated():
+    source = (
+        "def f(c, d):\n"
+        "    while c < 10:\n"
+        "        if d == 5:\n"
+        "            c += 1\n"
+    )
+    assert "Potential Infinite Loop" in smell_types(source)
+
+
+def test_infinite_loop_not_flagged_when_unconditionally_updated():
+    source = (
+        "def f(c):\n"
+        "    while c < 10:\n"
+        "        c += 1\n"
+    )
+    assert "Potential Infinite Loop" not in smell_types(source)
+
+
+def test_infinite_loop_not_flagged_with_unconditional_break():
+    source = (
+        "def f(c, d):\n"
+        "    while True:\n"
+        "        if d == 5:\n"
+        "            c += 1\n"
+        "        break\n"
+    )
+    assert "Potential Infinite Loop" not in smell_types(source)
+
+
+def test_infinite_loop_respects_config_toggle():
+    source = (
+        "def f(c, d):\n"
+        "    while c < 10:\n"
+        "        if d == 5:\n"
+        "            c += 1\n"
+    )
+    config = {**DEFAULT_CONFIG, "check_infinite_loops": False}
+    assert "Potential Infinite Loop" not in smell_types(source, config)

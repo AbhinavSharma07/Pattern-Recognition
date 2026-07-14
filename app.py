@@ -1,3 +1,4 @@
+import difflib
 import json
 import os
 from pathlib import Path
@@ -10,8 +11,9 @@ except ImportError:
     spaces = None
 
 from core.parser import load_config
+from core.severity import get_severity
 from agents.orchestrator import process_codebase
-from agents.main import build_combined_markdown_report, status_label
+from agents.main import build_combined_markdown_report, build_execution_trace, build_metrics_table, status_label
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -51,18 +53,26 @@ def _render_result(res: dict) -> str:
     status = status_label(res)
 
     issues_list = "\n".join(
-        f"- **{s.issue_type}** in `{s.target_name}` (line {s.line_number})" for s in smells
+        f"- **{s.issue_type}** [{get_severity(s.issue_type)}] in `{s.target_name}` (line {s.line_number})\n"
+        f"  - {s.reason}"
+        for s in smells
+    )
+
+    diff = difflib.unified_diff(
+        original_source.splitlines(keepends=True),
+        refactor.refactored_code.splitlines(keepends=True),
+        fromfile='original', tofile='refactored',
     )
 
     return "\n".join([
         f"### Unified Refactor — {len(smells)} issue(s) addressed",
         f"**Validation Status:** {status}\n",
+        f"**Agent Execution**\n```\n{build_execution_trace(res)}\n```\n",
         f"**Issues Addressed:**\n{issues_list}\n",
+        f"**AST Metrics**\n{build_metrics_table(res)}\n",
         f"**AI Explanation:** {refactor.explanation}\n",
-        "**Original Code**",
-        f"```python\n{original_source}\n```",
-        "**Refactored Code**",
-        f"```python\n{refactor.refactored_code}\n```",
+        "**Code Diff**",
+        f"```diff\n{''.join(diff)}\n```",
         "**Generated Pytest Validation**",
         f"```python\n{test.pytest_code}\n```",
         "---",

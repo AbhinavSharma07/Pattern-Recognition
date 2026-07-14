@@ -1,6 +1,8 @@
-"""Tests for agents.main.status_label, the shared status-rendering logic used by
-both the CLI Markdown report and the Gradio UI."""
-from agents.main import status_label
+"""Tests for agents.main's shared report-rendering logic (status_label,
+build_execution_trace, build_metrics_table), used by both the CLI Markdown
+report and the Gradio UI."""
+from core.schemas import CodeSmell, RefactorProposal
+from agents.main import status_label, build_execution_trace, build_metrics_table
 
 
 def test_validated_result():
@@ -36,3 +38,86 @@ def test_generation_error_does_not_say_api():
 def test_unknown_stage_falls_back_to_generic_skipped():
     label = status_label({"validated": False, "stage": None, "error_kind": None})
     assert "VALIDATION SKIPPED" in label
+
+
+# --- build_execution_trace ---
+
+def test_execution_trace_all_completed_when_validated():
+    trace = build_execution_trace({"validated": True})
+    assert "AST Analysis" in trace
+    for stage_name in ("Refactor Agent", "Test Generator Agent", "Reviewer Agent", "Sandbox Validator"):
+        assert f"✓ {stage_name}" in trace
+    assert "✗" not in trace
+    assert "Skipped" not in trace
+
+
+def test_execution_trace_stops_at_refactor_failure():
+    trace = build_execution_trace({"validated": False, "stage": "refactor", "error_kind": "api_error"})
+    assert "✗ Refactor Agent" in trace
+    # Everything after the failed stage must be explicitly marked Skipped, not
+    # silently omitted or (worse) shown as if it ran.
+    assert "— Test Generator Agent .......... Skipped" in trace
+    assert "— Reviewer Agent .......... Skipped" in trace
+    assert "— Sandbox Validator .......... Skipped" in trace
+
+
+def test_execution_trace_shows_completed_stages_before_a_later_failure():
+    trace = build_execution_trace({"validated": False, "stage": "sandbox", "error_kind": None})
+    assert "✓ Refactor Agent .......... Completed" in trace
+    assert "✓ Test Generator Agent .......... Completed" in trace
+    assert "✓ Reviewer Agent .......... Completed" in trace
+    assert "✗ Sandbox Validator" in trace
+
+
+def test_execution_trace_review_rejection_vs_review_api_error():
+    rejected = build_execution_trace({"validated": False, "stage": "review", "error_kind": None})
+    assert "✗ Reviewer Agent .......... Rejected" in rejected
+
+    api_error = build_execution_trace({"validated": False, "stage": "review", "error_kind": "api_error"})
+    assert "✗ Reviewer Agent .......... Failed (API error)" in api_error
+
+
+# --- build_metrics_table ---
+
+SAMPLE_SMELL = CodeSmell(
+    file_name="f.py", target_name="f", line_number=1,
+    issue_type="Too Many Arguments", raw_code="def f(a, b, c, d, e, f):\n    pass\n",
+)
+
+
+def test_metrics_table_shows_before_only_when_not_validated():
+    res = {
+        "smells": [SAMPLE_SMELL],
+        "source_code": SAMPLE_SMELL.raw_code,
+        "refactor": RefactorProposal(original_function_name="f", explanation="x", refactored_code="def f(*a):\n    pass\n"),
+        "validated": False,
+        "config": {},
+    }
+    table = build_metrics_table(res)
+    assert "refactor not validated" in table
+    assert "Detected Smells" in table
+
+
+def test_metrics_table_shows_real_before_after_when_validated():
+    res = {
+        "smells": [SAMPLE_SMELL],
+        "source_code": SAMPLE_SMELL.raw_code,
+        "refactor": RefactorProposal(
+            original_function_name="f", explanation="x",
+            refactored_code="def f(*args):\n    pass\n",
+        ),
+        "validated": True,
+        "config": {},
+    }
+    table = build_metrics_table(res)
+    assert "refactor not validated" not in table
+    # Before: 6 args over the default threshold; after: *args collapses it to 0 named args.
+    assert "| Max Arguments | 6 | 0 |" in table
+    # The refactored code no longer has the smell, so Detected Smells should drop to 0.
+    assert "| Detected Smells | 1 | 0 |" in table
+
+
+def test_metrics_table_handles_unparseable_original_source():
+    res = {"smells": [], "source_code": "def f(:\n", "refactor": None, "validated": False, "config": {}}
+    table = build_metrics_table(res)
+    assert "unavailable" in table.lower()

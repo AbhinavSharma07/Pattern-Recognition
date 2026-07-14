@@ -1,9 +1,10 @@
 import ast
 import json
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Set
 from collections import defaultdict
 from .schemas import CodeSmell
+from .metrics import max_nesting_depth as _shared_max_nesting_depth
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "max_arguments": 5,
@@ -12,6 +13,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "check_bare_except": True,
     "check_generic_exception": True,
     "max_list_comp_ifs": 2,
+    "check_infinite_loops": True,
     "custom_rules": [],
 }
 
@@ -41,13 +43,14 @@ class AntiPatternVisitor(ast.NodeVisitor):
             # Fallback for nodes that don't have a direct source segment
             return "..."
 
-    def _add_smell(self, issue_type: str, target_name: str, node: ast.AST):
+    def _add_smell(self, issue_type: str, target_name: str, node: ast.AST, reason: str = ""):
         self.smells.append(CodeSmell(
             issue_type=issue_type,
             target_name=target_name,
             raw_code=self._get_node_code(node),
             line_number=node.lineno,
-            file_name=self.file_name
+            file_name=self.file_name,
+            reason=reason,
         ))
 
     @staticmethod
@@ -75,37 +78,42 @@ class AntiPatternVisitor(ast.NodeVisitor):
 
     def _max_nesting_depth(self, node: ast.AST) -> int:
         """Computes the deepest nesting of control-flow blocks within a function body."""
-        NESTING_NODES = (ast.If, ast.For, ast.AsyncFor, ast.While, ast.Try, ast.With, ast.AsyncWith)
-
-        def depth(n: ast.AST) -> int:
-            child_depths = [
-                depth(child) + (1 if isinstance(child, NESTING_NODES) else 0)
-                for child in ast.iter_child_nodes(n)
-                if not isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef))
-            ]
-            return max(child_depths, default=0)
-
-        return depth(node)
+        return _shared_max_nesting_depth(node)
 
     def visit_FunctionDef(self, node: ast.FunctionDef):
         """Checks for long functions, too many arguments, deep nesting, and disallowed decorators."""
         max_len = self.config.get("max_function_length", 50)
-        if (node.end_lineno - node.lineno) > max_len:
-            self._add_smell("Long Function", node.name, node)
+        length = node.end_lineno - node.lineno
+        if length > max_len:
+            self._add_smell(
+                "Long Function", node.name, node,
+                reason=f"Function spans {length} lines. Configured threshold = {max_len}.",
+            )
 
         max_args = self.config.get("max_arguments", 5)
-        if len(node.args.args) > max_args:
-            self._add_smell("Too Many Arguments", node.name, node)
+        num_args = len(node.args.args)
+        if num_args > max_args:
+            self._add_smell(
+                "Too Many Arguments", node.name, node,
+                reason=f"Function has {num_args} positional parameters. Configured threshold = {max_args}.",
+            )
 
         max_depth = self.config.get("max_nesting_depth", 3)
-        if self._max_nesting_depth(node) > max_depth:
-            self._add_smell("Excessive Nesting Depth", node.name, node)
+        depth = self._max_nesting_depth(node)
+        if depth > max_depth:
+            self._add_smell(
+                "Excessive Nesting Depth", node.name, node,
+                reason=f"Maximum nesting depth = {depth}. Configured threshold = {max_depth}.",
+            )
 
         for decorator in node.decorator_list:
             decorator_name = self._get_decorator_name(decorator)
             for rule in self.custom_rules_by_type.get("Decorator", []):
                 if rule.get("match") == decorator_name:
-                    self._add_smell(rule.get("name", "Discouraged decorator"), decorator_name, node)
+                    self._add_smell(
+                        rule.get("name", "Discouraged decorator"), decorator_name, node,
+                        reason=f"Matches configured rule '{rule.get('name', decorator_name)}' (decorator: @{decorator_name}).",
+                    )
 
         self.generic_visit(node)
 
@@ -115,10 +123,16 @@ class AntiPatternVisitor(ast.NodeVisitor):
         """Checks for bare 'except:' clauses and overly broad 'except Exception:' clauses."""
         if node.type is None:
             if self.config.get("check_bare_except", True):
-                self._add_smell("Bare Except", "except block", node)
+                self._add_smell(
+                    "Bare Except", "except block", node,
+                    reason="Bare 'except:' catches every exception, including SystemExit and KeyboardInterrupt.",
+                )
         elif isinstance(node.type, ast.Name) and node.type.id == "Exception":
             if self.config.get("check_generic_exception", True):
-                self._add_smell("Generic Exception", "except Exception block", node)
+                self._add_smell(
+                    "Generic Exception", "except Exception block", node,
+                    reason="Catches the broad 'Exception' class, which can mask unrelated bugs.",
+                )
         self.generic_visit(node)
 
     def visit_ListComp(self, node: ast.ListComp):
@@ -126,7 +140,10 @@ class AntiPatternVisitor(ast.NodeVisitor):
         max_ifs = self.config.get("max_list_comp_ifs", 2)
         total_ifs = sum(len(gen.ifs) for gen in node.generators)
         if total_ifs > max_ifs:
-            self._add_smell("Complex List Comprehension", "list comprehension", node)
+            self._add_smell(
+                "Complex List Comprehension", "list comprehension", node,
+                reason=f"List comprehension has {total_ifs} 'if' filter(s). Configured threshold = {max_ifs}.",
+            )
         self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call):
@@ -137,7 +154,10 @@ class AntiPatternVisitor(ast.NodeVisitor):
         for rule in self.custom_rules_by_type.get("Call", []):
             pattern = rule.get("match")
             if pattern in (dotted_name, simple_name):
-                self._add_smell(rule.get("name", "Disallowed function call"), dotted_name, node)
+                self._add_smell(
+                    rule.get("name", "Disallowed function call"), dotted_name, node,
+                    reason=f"Matches configured rule '{rule.get('name', dotted_name)}' (call: {dotted_name}).",
+                )
         self.generic_visit(node)
 
     def visit_Import(self, node: ast.Import):
@@ -146,7 +166,10 @@ class AntiPatternVisitor(ast.NodeVisitor):
             module_name = alias.name
             for rule in self.custom_rules_by_type.get("Import", []):
                 if rule.get("match") == module_name:
-                    self._add_smell(rule.get("name", "Disallowed import"), module_name, node)
+                    self._add_smell(
+                        rule.get("name", "Disallowed import"), module_name, node,
+                        reason=f"Matches configured rule '{rule.get('name', module_name)}' (import: {module_name}).",
+                    )
         self.generic_visit(node)
 
     def visit_ImportFrom(self, node: ast.ImportFrom):
@@ -154,8 +177,58 @@ class AntiPatternVisitor(ast.NodeVisitor):
         module_name = node.module or ""
         for rule in self.custom_rules_by_type.get("Import", []):
             if rule.get("match") == module_name:
-                self._add_smell(rule.get("name", "Disallowed 'from' import"), module_name, node)
+                self._add_smell(
+                    rule.get("name", "Disallowed 'from' import"), module_name, node,
+                    reason=f"Matches configured rule '{rule.get('name', module_name)}' (from-import: {module_name}).",
+                )
         self.generic_visit(node)
+
+    def visit_While(self, node: ast.While):
+        """
+        Heuristic check for a common infinite-loop pattern: the loop condition's
+        variable(s) are only ever updated inside a conditional branch, with no
+        unconditional break/return anywhere in the loop body.
+
+        This is a best-effort heuristic, not a soundness guarantee -- proving a
+        loop terminates is undecidable in general. It catches one common,
+        genuine mistake (e.g. `while c < 10: if d == 5: c += 1`, which never
+        terminates if `d != 5`) but can both miss real infinite loops with more
+        complex control flow and, more rarely, flag loops a human would
+        recognize as safe. Always reported as "Potential", never asserted as fact.
+        """
+        if self.config.get("check_infinite_loops", True):
+            condition_vars = {n.id for n in ast.walk(node.test) if isinstance(n, ast.Name)}
+            if condition_vars and self._loop_var_only_conditionally_updated(node, condition_vars):
+                self._add_smell(
+                    "Potential Infinite Loop", "while loop", node,
+                    reason=(
+                        f"Loop variable(s) {sorted(condition_vars)} appear to be modified only inside a "
+                        "conditional branch, with no unconditional break/return in the loop body. "
+                        "The loop may never terminate if that branch is never taken."
+                    ),
+                )
+        self.generic_visit(node)
+
+    @staticmethod
+    def _loop_var_only_conditionally_updated(node: ast.While, condition_vars: Set[str]) -> bool:
+        """
+        Looks only at the loop body's top-level statements (not nested inside
+        further if/for/while blocks, which would make an update conditional
+        anyway). Returns True (flag as suspicious) when none of them
+        unconditionally update a condition variable or unconditionally exit
+        the loop.
+        """
+        for stmt in node.body:
+            if isinstance(stmt, (ast.Break, ast.Return)):
+                return False  # can exit unconditionally -- not flaggable as infinite
+            if isinstance(stmt, ast.Assign):
+                targets = {t.id for t in stmt.targets if isinstance(t, ast.Name)}
+                if targets & condition_vars:
+                    return False  # unconditionally updated
+            if isinstance(stmt, ast.AugAssign) and isinstance(stmt.target, ast.Name):
+                if stmt.target.id in condition_vars:
+                    return False
+        return True
 
 
 def analyze_source_code(source_code: str, file_name: str, config: Dict[str, Any] = None) -> List[CodeSmell]:

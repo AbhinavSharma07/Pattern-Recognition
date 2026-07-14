@@ -8,6 +8,10 @@ class CodeSmell(BaseModel):
     line_number: int = Field(description="The starting line number of the code block.")
     issue_type: str = Field(description="A description of the identified anti-pattern.")
     raw_code: str = Field(description="The raw string representation of the problematic code block.")
+    reason: str = Field(
+        default="",
+        description="Deterministic, AST-derived explanation of why this was flagged (e.g. actual count vs configured threshold).",
+    )
 
 class RefactorProposal(BaseModel):
     """The structured response expected from the LLM Refactoring Agent."""

@@ -60,6 +60,7 @@ def test_process_codebase_happy_path(tmp_path, monkeypatch):
     assert results[0]["test"] == SAMPLE_TEST
     assert len(results[0]["smells"]) == 1
     assert results[0]["source_code"] == SOURCE_WITH_SMELL
+    assert results[0]["config"] == {}
 
 
 def test_process_codebase_bundles_all_smells_into_one_refactor(tmp_path, monkeypatch):
@@ -85,6 +86,30 @@ def test_process_codebase_bundles_all_smells_into_one_refactor(tmp_path, monkeyp
     assert len(results) == 1  # one consolidated result for the whole file
     assert len(calls) == 1  # the refactor agent was invoked exactly once for this attempt
     assert len(calls[0]) == len(results[0]["smells"]) >= 2  # bundled, not split
+
+
+def test_process_codebase_sorts_smells_by_severity(tmp_path, monkeypatch):
+    """Bare Except (High) must be presented to the Refactor Agent before Too
+    Many Arguments (Medium), so the most severe issue is prioritized -- there's
+    no separate Planner Agent, so this ordering is the prioritization step."""
+    monkeypatch.chdir(tmp_path)
+    captured = {}
+
+    def capturing_refactor(file_name, source_code, smells, feedback, config):
+        captured["order"] = [s.issue_type for s in smells]
+        return SAMPLE_REFACTOR
+
+    monkeypatch.setattr(orchestrator, "run_refactor_agent", capturing_refactor)
+    monkeypatch.setattr(orchestrator, "run_test_agent", lambda proposal, config: SAMPLE_TEST)
+    monkeypatch.setattr(orchestrator, "run_reviewer_agent", _reviewer_approve_stub)
+    monkeypatch.setattr(
+        orchestrator, "execute_tests",
+        lambda refactored_code, test_code, use_docker=False: {"success": True, "output": "1 passed"},
+    )
+
+    orchestrator.process_codebase(MULTI_SMELL_SOURCE, "bad.py", config={})
+
+    assert captured["order"].index("Bare Except") < captured["order"].index("Too Many Arguments")
 
 
 def test_process_codebase_caches_validated_result(tmp_path, monkeypatch):

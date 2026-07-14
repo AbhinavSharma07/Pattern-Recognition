@@ -5,6 +5,8 @@ import difflib
 from pathlib import Path
 from typing import Dict, List
 from core.parser import analyze_source_code, load_config
+from core.metrics import compute_metrics
+from core.severity import get_severity
 from agents.orchestrator import process_codebase
 from dotenv import load_dotenv
 
@@ -159,6 +161,98 @@ def status_label(res: dict) -> str:
     return "❌ VALIDATION SKIPPED (pipeline did not complete)"
 
 
+_STAGE_ORDER = ["refactor", "test_generation", "review", "sandbox"]
+_STAGE_TRACE_NAMES = {
+    "refactor": "Refactor Agent",
+    "test_generation": "Test Generator Agent",
+    "review": "Reviewer Agent",
+    "sandbox": "Sandbox Validator",
+}
+
+
+def build_execution_trace(res: dict) -> str:
+    """
+    Renders a checklist of every pipeline stage (AST Analysis is always first
+    and always completed -- if parsing had failed, there would be no smells
+    and no report at all) showing which ran, which failed, and which were
+    correctly skipped once an earlier stage failed. Makes the "stop the
+    pipeline on failure" behavior (already enforced by the graph's guards)
+    visible in the report instead of just implicit in the status line.
+    """
+    lines = ["✓ AST Analysis .......... Completed"]
+    validated = res.get("validated", False)
+
+    if validated:
+        lines.extend(f"✓ {_STAGE_TRACE_NAMES[s]} .......... Completed" for s in _STAGE_ORDER)
+        return "\n".join(lines)
+
+    stage = res.get("stage")
+    error_kind = res.get("error_kind")
+    if stage not in _STAGE_ORDER:
+        lines.extend(f"? {_STAGE_TRACE_NAMES[s]} .......... Unknown" for s in _STAGE_ORDER)
+        return "\n".join(lines)
+
+    failed_index = _STAGE_ORDER.index(stage)
+    for i, s in enumerate(_STAGE_ORDER):
+        name = _STAGE_TRACE_NAMES[s]
+        if i < failed_index:
+            lines.append(f"✓ {name} .......... Completed")
+        elif i > failed_index:
+            lines.append(f"— {name} .......... Skipped")
+        elif s == "sandbox":
+            lines.append(f"✗ {name} .......... Failed (generated tests did not pass)")
+        elif s == "review" and error_kind is None:
+            lines.append(f"✗ {name} .......... Rejected")
+        elif error_kind == "api_error":
+            lines.append(f"✗ {name} .......... Failed (API error)")
+        else:
+            lines.append(f"✗ {name} .......... Failed")
+    return "\n".join(lines)
+
+
+def build_metrics_table(res: dict) -> str:
+    """
+    Renders a Before/After AST-metrics table. All figures are computed
+    directly from the AST (deterministic, no LLM) -- the "After" column is
+    only shown when the refactor was actually validated, since an unvalidated
+    refactored_code isn't known-good and comparing against it would be
+    misleading.
+    """
+    original_source = res.get("source_code", "")
+    before = compute_metrics(original_source)
+    if before is None:
+        return "*(AST metrics unavailable: original source did not parse.)*"
+
+    validated = res.get("validated", False)
+    after, smells_after = None, None
+    if validated:
+        refactored_code = res["refactor"].refactored_code
+        after = compute_metrics(refactored_code)
+        file_name = res["smells"][0].file_name if res["smells"] else "refactored.py"
+        smells_after = len(analyze_source_code(refactored_code, file_name, res.get("config") or {}))
+
+    def after_cell(before_value, after_value):
+        if not validated:
+            return "*(refactor not validated)*"
+        return "*(unavailable)*" if after_value is None else after_value
+
+    rows = [
+        ("Functions", before.functions, after.functions if after else None),
+        ("Lines of Code", before.lines_of_code, after.lines_of_code if after else None),
+        ("Max Arguments", before.max_arguments, after.max_arguments if after else None),
+        ("Max Nesting Depth", before.max_nesting_depth, after.max_nesting_depth if after else None),
+        ("Cyclomatic Complexity", before.cyclomatic_complexity, after.cyclomatic_complexity if after else None),
+        ("Number of Loops", before.num_loops, after.num_loops if after else None),
+        ("Branches", before.branches, after.branches if after else None),
+        ("Function Calls", before.function_calls, after.function_calls if after else None),
+        ("Detected Smells", len(res.get("smells", [])), smells_after),
+    ]
+
+    lines = ["| Metric | Before | After |", "|---|---|---|"]
+    lines.extend(f"| {name} | {before_value} | {after_cell(before_value, after_value)} |" for name, before_value, after_value in rows)
+    return "\n".join(lines)
+
+
 def _render_result_section(res: dict) -> str:
     """Renders a file-level unified-refactor result (addressing every smell
     found in that file at once) as a Markdown section."""
@@ -167,7 +261,9 @@ def _render_result_section(res: dict) -> str:
     status = status_label(res)
 
     issues_list = "\n".join(
-        f"- **{s.issue_type}** in `{s.target_name}` (line {s.line_number})" for s in smells
+        f"- **{s.issue_type}** [{get_severity(s.issue_type)}] in `{s.target_name}` (line {s.line_number})\n"
+        f"  - {s.reason}"
+        for s in smells
     )
 
     diff = difflib.unified_diff(
@@ -178,7 +274,9 @@ def _render_result_section(res: dict) -> str:
 
     return "\n".join([
         f"## Unified Refactor ({status})",
+        f"### Agent Execution\n```\n{build_execution_trace(res)}\n```\n",
         f"**Issues Addressed ({len(smells)}):**\n{issues_list}\n",
+        f"### AST Metrics\n{build_metrics_table(res)}\n",
         f"### Explanation\n{refactor.explanation}\n",
         f"### Code Diff\n```diff\n{''.join(diff)}\n```\n",
         f"### Generated Test\n```python\n{test.pytest_code}\n```\n---\n",
