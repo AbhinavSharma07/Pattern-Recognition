@@ -84,6 +84,47 @@ To launch the Gradio UI:
 python app.py
 ```
 
+## Example
+
+Save this as `example.py` — it's deliberately packed with several anti-patterns at once:
+
+```python
+import os
+
+def process_user_data(a, b, c, d, e, f, g):
+    if a > 0:
+        for i in range(b):
+            while c < 10:
+                if d == 5:
+                    print(e, f, g)
+                    c += 1
+
+    try:
+        os.system("echo risky")
+    except Exception as e:
+        print(f"Error: {e}")
+
+    valid_data = [x for x in range(100) if x % 2 == 0 if x % 3 == 0 if x % 5 == 0]
+    return valid_data
+```
+
+Running `ast-refactor scan example.py` reports every smell in it:
+
+```
+⚠️ Found 5 code smell(s) in example.py:
+  1. process_user_data (Line 3): Too Many Arguments
+  2. process_user_data (Line 3): Excessive Nesting Depth
+  3. os.system (Line 12): Discouraged 'os.system' call
+  4. except Exception block (Line 13): Generic Exception
+  5. list comprehension (Line 16): Complex List Comprehension
+```
+
+Running `ast-refactor fix example.py --apply --report` sends each of those five
+smells through the full agent pipeline (refactor → generate tests → review →
+sandbox-validate) and, for every smell whose refactor actually passes its
+generated tests, applies the fix directly to `example.py` and writes a
+Markdown report of what changed and why.
+
 ## Running the Tests
 
 ```bash
