@@ -1,9 +1,4 @@
-"""
-Exercises the LangGraph wiring in agents/orchestrator.py end-to-end (parse ->
-one unified refactor for the whole file -> test -> review -> sandbox) with the
-LLM-calling functions replaced by fakes, so it doesn't need network access or
-an API key.
-"""
+"""Exercises the LangGraph wiring in agents/orchestrator.py end-to-end with LLM calls faked out."""
 from core.schemas import RefactorProposal, TestCaseProposal
 from agents.reviewer_agent import ReviewDecision
 from agents import orchestrator
@@ -64,8 +59,7 @@ def test_process_codebase_happy_path(tmp_path, monkeypatch):
 
 
 def test_process_codebase_bundles_all_smells_into_one_refactor(tmp_path, monkeypatch):
-    """Multiple smells in the same file must produce ONE unified refactor call,
-    not one independent refactor per smell."""
+    """Multiple smells in the same file must produce ONE unified refactor call."""
     monkeypatch.chdir(tmp_path)
     calls = []
 
@@ -89,9 +83,7 @@ def test_process_codebase_bundles_all_smells_into_one_refactor(tmp_path, monkeyp
 
 
 def test_process_codebase_sorts_smells_by_severity(tmp_path, monkeypatch):
-    """Bare Except (High) must be presented to the Refactor Agent before Too
-    Many Arguments (Medium), so the most severe issue is prioritized -- there's
-    no separate Planner Agent, so this ordering is the prioritization step."""
+    """Bare Except (High) must be presented before Too Many Arguments (Medium)."""
     monkeypatch.chdir(tmp_path)
     captured = {}
 
@@ -136,8 +128,7 @@ def test_process_codebase_caches_validated_result(tmp_path, monkeypatch):
 
 
 def test_process_codebase_cache_isolated_by_namespace(tmp_path, monkeypatch):
-    """Two different cache_namespaces (e.g. two different browser sessions on a
-    shared public deployment) must never share cached results."""
+    """Two different cache_namespaces must never share cached results."""
     monkeypatch.chdir(tmp_path)
     calls = {"n": 0}
 
@@ -179,9 +170,7 @@ def test_process_codebase_retries_then_gives_up(tmp_path, monkeypatch):
 
 
 def test_process_codebase_survives_refactor_agent_exception(tmp_path, monkeypatch):
-    """A model that never returns usable structured output (e.g. an Ollama model
-    ignoring the JSON schema) must not crash the whole run -- it should be
-    treated like any other retryable failure and reported, not raised."""
+    """A model that never returns usable structured output must not crash the run."""
     monkeypatch.chdir(tmp_path)
 
     def always_raises(file_name, source_code, smells, feedback, config):
@@ -200,8 +189,7 @@ def test_process_codebase_survives_refactor_agent_exception(tmp_path, monkeypatc
 
 
 def test_process_codebase_classifies_rate_limit_as_api_error(tmp_path, monkeypatch):
-    """A provider rate-limit/transport error must be distinguishable from the model
-    just producing unusable output -- it never got a real chance to generate."""
+    """A provider rate-limit/transport error must be distinguishable from a bad model output."""
     monkeypatch.chdir(tmp_path)
 
     def rate_limited(file_name, source_code, smells, feedback, config):
@@ -216,8 +204,7 @@ def test_process_codebase_classifies_rate_limit_as_api_error(tmp_path, monkeypat
 
 
 def test_process_codebase_reviewer_rejection_has_no_error_kind(tmp_path, monkeypatch):
-    """A reviewer rejecting a proposal is a legitimate outcome, not a system error --
-    it must not be misreported as an API/generation error."""
+    """A reviewer rejection must not be misreported as an API/generation error."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(orchestrator, "run_refactor_agent", _refactor_stub)
     monkeypatch.setattr(orchestrator, "run_test_agent", lambda proposal, config: SAMPLE_TEST)
@@ -234,11 +221,7 @@ def test_process_codebase_reviewer_rejection_has_no_error_kind(tmp_path, monkeyp
 
 
 def test_process_codebase_clears_stale_test_after_later_refactor_failure(tmp_path, monkeypatch):
-    """Regression test: if an earlier retry got as far as generating a test_proposal
-    (for a refactor that was then rejected), and a LATER retry's refactor step fails
-    outright, that stale test from the discarded attempt must not leak into the
-    final result -- it was written for a different, now-gone refactor proposal, and
-    showing it alongside "refactor generation failed" is misleading."""
+    """A stale test_proposal from an earlier retry must not leak into a later refactor failure."""
     monkeypatch.chdir(tmp_path)
     calls = {"n": 0}
 

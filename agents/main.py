@@ -102,23 +102,7 @@ def fix(
                 )
 
 def apply_validated_fixes(source_code: str, results: list) -> tuple:
-    """
-    Applies the validated result (if any) to source_code.
-
-    Each file now gets exactly one unified refactor addressing every smell
-    detected in it at once, so "applying" a validated result is just using
-    its refactored_code as the new whole-file content directly -- there's no
-    more per-smell patching, and therefore no more risk of two separate
-    fixes overlapping and corrupting the file (a real bug the old per-smell
-    approach had).
-
-    `results` is expected to have zero or one entries (process_codebase
-    returns one consolidated result per file); only the first validated one
-    is used, since there is only ever one.
-
-    Returns (new_source, count_of_fixes_actually_applied) -- count is 0 or 1,
-    kept as a count rather than a bool for backward-compatible call sites.
-    """
+    """Returns (new_source, count_applied); count is 0 or 1 since each file has one unified refactor."""
     for res in results:
         if res.get("validated", False):
             return res["refactor"].refactored_code, 1
@@ -133,17 +117,7 @@ _STAGE_LABELS = {
 
 
 def status_label(res: dict) -> str:
-    """
-    Renders a precise status for a single result, distinguishing:
-    - VALIDATED: sandbox tests actually ran and passed.
-    - VALIDATION FAILED: sandbox tests actually ran and failed.
-    - REJECTED BY REVIEWER: the reviewer declined it; never reached the sandbox.
-    - API ERROR during <stage>: a provider/transport error (rate limit, timeout,
-      connection error, ...) -- the model/pipeline never got a real chance.
-    - <STAGE> FAILED: the model produced unusable output at that stage (e.g. bad
-      structured output) -- distinct from an API error, and distinct from a test
-      that actually ran and failed.
-    """
+    """Distinguishes tests-ran-and-failed / reviewer-rejected / API-error / generation-failed."""
     if res.get("validated", False):
         return "✅ VALIDATED (sandbox tests passed)"
 
@@ -171,14 +145,7 @@ _STAGE_TRACE_NAMES = {
 
 
 def build_execution_trace(res: dict) -> str:
-    """
-    Renders a checklist of every pipeline stage (AST Analysis is always first
-    and always completed -- if parsing had failed, there would be no smells
-    and no report at all) showing which ran, which failed, and which were
-    correctly skipped once an earlier stage failed. Makes the "stop the
-    pipeline on failure" behavior (already enforced by the graph's guards)
-    visible in the report instead of just implicit in the status line.
-    """
+    """Checklist of every pipeline stage: completed, failed, or skipped after an earlier failure."""
     lines = ["✓ AST Analysis .......... Completed"]
     validated = res.get("validated", False)
 
@@ -211,13 +178,7 @@ def build_execution_trace(res: dict) -> str:
 
 
 def build_metrics_table(res: dict) -> str:
-    """
-    Renders a Before/After AST-metrics table. All figures are computed
-    directly from the AST (deterministic, no LLM) -- the "After" column is
-    only shown when the refactor was actually validated, since an unvalidated
-    refactored_code isn't known-good and comparing against it would be
-    misleading.
-    """
+    """"After" column only shown when validated -- an unvalidated refactor isn't known-good."""
     original_source = res.get("source_code", "")
     before = compute_metrics(original_source)
     if before is None:

@@ -22,28 +22,14 @@ REPORT_PATH = Path("refactor_report.md")
 
 
 def _running_on_hf_space() -> bool:
-    """
-    True when running as a Hugging Face Space (which sets SPACE_ID
-    automatically). Used to disable behavior that's unsafe on a shared,
-    multi-tenant public deployment: the Docker sandbox option (no Docker
-    daemon is available inside a Space container anyway) and writing
-    config edits to the shared config.json file on disk (which would leak
-    one visitor's settings to every other concurrent visitor).
-    """
+    """True on a public HF Space (SPACE_ID set) -- disables Docker sandbox and shared config writes."""
     return bool(os.environ.get("SPACE_ID"))
 
 
 if spaces is not None:
     @spaces.GPU
     def _zerogpu_startup_check():
-        """
-        This app never uses a GPU -- every LLM call goes to a remote provider
-        (Groq/OpenAI/Ollama) over HTTP. This function exists only because
-        Hugging Face's ZeroGPU hardware refuses to start a Space that has no
-        @spaces.GPU-decorated function at all, and ZeroGPU is the only
-        hardware tier available on this account (CPU Basic requires a PRO
-        subscription to switch to). It is never called.
-        """
+        """Never called -- exists only because ZeroGPU refuses to start a Space with no @spaces.GPU function."""
         return None
 
 
@@ -99,13 +85,11 @@ def run_analysis(code_input: str, uploaded_files, use_docker: bool, config_text:
     if not files_to_process:
         return "⚠️ Please paste some code or upload at least one `.py` file.", None
 
-    # No Docker daemon exists inside a Space container -- ignore the flag there
-    # even if it were somehow enabled (e.g. via the API, bypassing the hidden checkbox).
+    # No Docker daemon inside a Space container.
     if _running_on_hf_space():
         use_docker = False
 
-    # Scope the results cache to this browser session so one visitor's cached
-    # result is never served to a different visitor on a shared public deployment.
+    # Scope the cache per browser session so results aren't shared across visitors.
     cache_namespace = request.session_hash if request is not None else None
 
     results_by_file = {
@@ -137,10 +121,7 @@ def save_config(config_text: str):
         return f"⚠️ Invalid JSON, not saved: {e}"
 
     if _running_on_hf_space():
-        # config.json lives on the Space's shared filesystem -- writing it here would
-        # leak this visitor's edits to every other concurrent visitor. The edited JSON
-        # already applies to this visitor's own "Analyze & Refactor" runs regardless
-        # (it's passed directly from the editor), so nothing is lost by not persisting it.
+        # config.json is shared filesystem state on a Space -- writing it would leak to every visitor.
         return "ℹ️ Changes apply to your session's analysis runs. Saving to disk is disabled on this public demo."
 
     config = json.loads(config_text)

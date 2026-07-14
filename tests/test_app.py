@@ -74,8 +74,7 @@ def test_save_config_rejects_invalid_json(tmp_path, monkeypatch):
 
 
 def test_save_config_on_hf_space_does_not_write_shared_file(tmp_path, monkeypatch):
-    """On a public Space, config.json is shared filesystem state across every
-    visitor -- saving one visitor's edits there would leak to everyone else."""
+    """Saving to the shared config.json on a public Space would leak to every visitor."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("SPACE_ID", "someuser/somespace")
 
@@ -86,8 +85,7 @@ def test_save_config_on_hf_space_does_not_write_shared_file(tmp_path, monkeypatc
 
 
 def test_run_analysis_forces_docker_off_on_hf_space(monkeypatch):
-    """No Docker daemon exists inside a Space container -- use_docker must be
-    ignored there even if somehow set True (e.g. via direct API access)."""
+    """No Docker daemon exists inside a Space container, regardless of the flag."""
     monkeypatch.setenv("SPACE_ID", "someuser/somespace")
     captured = {}
 
@@ -103,8 +101,7 @@ def test_run_analysis_forces_docker_off_on_hf_space(monkeypatch):
 
 
 def test_run_analysis_scopes_cache_to_session(monkeypatch):
-    """Each browser session's results must be cached under its own namespace so
-    one visitor's cached result is never served to a different visitor."""
+    """One visitor's cached result must never be served to a different visitor."""
     captured = {}
 
     def fake_process_codebase(source, file_name, use_docker, config, cache_namespace=None):

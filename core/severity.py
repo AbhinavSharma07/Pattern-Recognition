@@ -1,11 +1,4 @@
-"""
-Static severity classification for detected code smells.
-
-Severity is a pure function of issue_type -- deterministic and rule-based,
-same as detection itself. It's kept out of the CodeSmell schema (rather than
-stored at detection time) since it's cheap to derive on demand and this
-avoids touching every CodeSmell construction site across the codebase.
-"""
+"""Static severity classification for detected code smells."""
 
 CRITICAL = "Critical"
 HIGH = "High"
@@ -27,14 +20,7 @@ _SEVERITY_ORDER = {CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3}
 
 
 def get_severity(issue_type: str) -> str:
-    """
-    Returns the severity for a built-in issue_type. Custom rules (Call/Import/
-    Decorator, user-defined in config.json) and any other unrecognized
-    issue_type default to Medium -- there's no principled way to guess a
-    user-defined rule's severity, and Medium is a reasonable, non-alarming
-    default rather than silently treating unknown issues as Low (understating
-    them) or High (overstating them).
-    """
+    """Unrecognized issue types (e.g. custom config.json rules) default to Medium."""
     return _SEVERITY_BY_ISSUE_TYPE.get(issue_type, MEDIUM)
 
 

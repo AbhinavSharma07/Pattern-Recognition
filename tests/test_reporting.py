@@ -1,6 +1,4 @@
-"""Tests for agents.main's shared report-rendering logic (status_label,
-build_execution_trace, build_metrics_table), used by both the CLI Markdown
-report and the Gradio UI."""
+"""Tests for agents.main's shared report-rendering logic, used by both the CLI and Gradio UI."""
 from core.schemas import CodeSmell, RefactorProposal
 from agents.main import status_label, build_execution_trace, build_metrics_table
 

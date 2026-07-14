@@ -184,18 +184,8 @@ class AntiPatternVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_While(self, node: ast.While):
-        """
-        Heuristic check for a common infinite-loop pattern: the loop condition's
-        variable(s) are only ever updated inside a conditional branch, with no
-        unconditional break/return anywhere in the loop body.
-
-        This is a best-effort heuristic, not a soundness guarantee -- proving a
-        loop terminates is undecidable in general. It catches one common,
-        genuine mistake (e.g. `while c < 10: if d == 5: c += 1`, which never
-        terminates if `d != 5`) but can both miss real infinite loops with more
-        complex control flow and, more rarely, flag loops a human would
-        recognize as safe. Always reported as "Potential", never asserted as fact.
-        """
+        # Heuristic, not a proof (loop termination is undecidable in general) --
+        # always reported as "Potential", never asserted as fact.
         if self.config.get("check_infinite_loops", True):
             condition_vars = {n.id for n in ast.walk(node.test) if isinstance(n, ast.Name)}
             if condition_vars and self._loop_var_only_conditionally_updated(node, condition_vars):
@@ -211,20 +201,14 @@ class AntiPatternVisitor(ast.NodeVisitor):
 
     @staticmethod
     def _loop_var_only_conditionally_updated(node: ast.While, condition_vars: Set[str]) -> bool:
-        """
-        Looks only at the loop body's top-level statements (not nested inside
-        further if/for/while blocks, which would make an update conditional
-        anyway). Returns True (flag as suspicious) when none of them
-        unconditionally update a condition variable or unconditionally exit
-        the loop.
-        """
+        # Only checks top-level statements -- nested if/for/while would make an update conditional anyway.
         for stmt in node.body:
             if isinstance(stmt, (ast.Break, ast.Return)):
-                return False  # can exit unconditionally -- not flaggable as infinite
+                return False
             if isinstance(stmt, ast.Assign):
                 targets = {t.id for t in stmt.targets if isinstance(t, ast.Name)}
                 if targets & condition_vars:
-                    return False  # unconditionally updated
+                    return False
             if isinstance(stmt, ast.AugAssign) and isinstance(stmt.target, ast.Name):
                 if stmt.target.id in condition_vars:
                     return False

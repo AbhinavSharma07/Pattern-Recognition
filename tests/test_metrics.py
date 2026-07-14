@@ -23,8 +23,7 @@ def test_compute_metrics_returns_none_on_syntax_error():
 
 
 def test_compute_metrics_nesting_depth_matches_parser_semantics():
-    """A function nested inside another shouldn't inflate the outer function's
-    own nesting number, matching core/parser.py's smell-detection semantics."""
+    """A nested function shouldn't inflate the outer function's own nesting number."""
     source = (
         "def outer():\n"
         "    if True:\n"
@@ -36,10 +35,7 @@ def test_compute_metrics_nesting_depth_matches_parser_semantics():
         "        return inner\n"
     )
     m = compute_metrics(source)
-    # outer()'s own nesting is only 1 (the single `if True`); inner()'s deep
-    # nesting must not leak into the file-wide max via outer's measurement,
-    # but inner() is still its own function and does contribute its own depth.
-    assert m.max_nesting_depth == 3  # inner()'s three nested ifs
+    assert m.max_nesting_depth == 3  # inner()'s three nested ifs, measured independently
 
 
 def test_compute_metrics_detects_module_level_nesting_without_functions():

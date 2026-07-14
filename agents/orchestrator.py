@@ -33,9 +33,7 @@ _API_ERROR_SIGNALS = (
 
 
 def _classify_error(e: Exception) -> str:
-    """Best-effort classification of an agent-call exception, so the report can
-    say "API error" (transient/provider-side) rather than implying the model's
-    output itself was the problem."""
+    """Distinguishes a transient/provider-side API error from a bad model output."""
     text = str(e).lower()
     if any(signal in text for signal in _API_ERROR_SIGNALS):
         return ERROR_KIND_API
@@ -44,15 +42,7 @@ def _classify_error(e: Exception) -> str:
 
 # --- 1. Define the State for our Graph ---
 class AgentGraphState(BaseModel):
-    """
-    Represents the state of our multi-agent workflow for a single file.
-
-    One unified refactor is produced per file, addressing every smell detected
-    in it at once -- not one independent refactor per smell. This avoids the
-    overlapping-edit conflicts that arise when several isolated per-smell
-    refactors touch the same region of a file, and gives a single, coherent,
-    reviewable diff per file instead of a pile of small ones.
-    """
+    """State of the multi-agent workflow: one unified refactor per file, addressing every smell at once."""
     file_name: str
     source_code: str
     smells: List[CodeSmell]
@@ -69,11 +59,8 @@ class AgentGraphState(BaseModel):
     final_result: Optional[Dict] = None
 
 # --- 2. Define the Nodes (Agent Functions) ---
-# Every node below catches Exception broadly and on purpose: an LLM call can fail
-# in ways that have nothing to do with our code (a model that ignores the
-# structured-output schema, a transient provider error, ...). Treating any such
-# failure as retryable feedback keeps one bad LLM response from crashing the
-# whole batch, instead of only doing so for the reviewer/sandbox-rejection path.
+# Nodes catch Exception broadly on purpose -- any LLM failure becomes retryable
+# feedback instead of crashing the batch.
 def refactor_code_node(state: AgentGraphState) -> AgentGraphState:
     """Node that runs the refactoring agent over the whole file and all its smells."""
     print(f"[*] Refactor Agent is rewriting {state.file_name} to address {len(state.smells)} smell(s)...")
@@ -83,10 +70,7 @@ def refactor_code_node(state: AgentGraphState) -> AgentGraphState:
     except Exception as e:
         print(f"[-] Refactor Agent failed: {e}")
         state.refactor_proposal = None
-        # A prior retry iteration may have gotten as far as generating a test_proposal
-        # (for a refactor that was then rejected/failed sandbox), which must not survive
-        # into this failed attempt -- it was written for a different, now-discarded
-        # refactor and would otherwise be shown alongside this attempt's placeholder.
+        # Clear any test_proposal from a prior retry -- it belongs to a now-discarded refactor.
         state.test_proposal = None
         state.feedback = f"REFACTOR AGENT ERROR: {e}"
         state.error_kind = _classify_error(e)
@@ -174,21 +158,13 @@ def process_codebase(
     cache_namespace: str = None,
 ) -> List[Dict[str, Any]]:
     """
-    Orchestrates the full flow: Parse -> Detect all smells -> one unified
-    Refactor -> Test Generation -> Review -> Sandbox Validation, for the file
-    as a whole.
+    Parse -> detect all smells -> one unified Refactor -> Test Generation ->
+    Review -> Sandbox Validation for the file as a whole.
 
-    Returns a list with either zero entries (no smells found) or exactly one
-    entry: the single consolidated result for this file, whose "smells" field
-    lists every anti-pattern the refactor was meant to address. (Kept as a
-    list, rather than returning the dict directly, so existing "for res in
-    results" callers iterating over a file's results didn't need to change
-    shape when this moved from one-result-per-smell to one-result-per-file.)
-
-    cache_namespace scopes the result cache (e.g. to a browser session hash in
-    a multi-tenant web UI) so one caller's cached results are never served to
-    a different caller. Defaults to a shared namespace, matching the original
-    single-user CLI behavior.
+    Returns zero entries (no smells) or exactly one consolidated result dict
+    (kept as a list for backward-compatible "for res in results" call sites).
+    cache_namespace scopes the result cache per caller (e.g. browser session
+    hash) in a multi-tenant web UI.
     """
 
     # --- Caching Setup ---

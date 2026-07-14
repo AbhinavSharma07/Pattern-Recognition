@@ -18,8 +18,7 @@ def _result(source, refactored_code, validated=True):
 
 
 def test_applies_validated_unified_refactor():
-    """Each file now gets exactly one unified refactor covering the whole file --
-    applying it is just using the refactored_code as the new file content."""
+    """Applying a validated refactor uses refactored_code as the new whole-file content."""
     source = "def f(a, b):\n    return a + b\n"
     refactored = "def f(*args):\n    return sum(args)\n"
     results = [_result(source, refactored)]
@@ -51,9 +50,7 @@ def test_no_results_leaves_source_unchanged():
 
 
 def test_multi_statement_refactor_applies_cleanly():
-    """A refactor that introduces a helper function alongside the fix (multiple
-    top-level statements) is just part of the whole-file replacement now --
-    no per-statement parsing/patching to trip over."""
+    """Multiple top-level statements in the refactor are just part of the whole-file replacement."""
     source = "def f(a, b):\n    return a + b\n"
     refactored = (
         "def _helper(a, b):\n"
