@@ -1,4 +1,6 @@
 """Exercises the LangGraph wiring in agents/orchestrator.py end-to-end with LLM calls faked out."""
+import pytest
+
 from core.schemas import RefactorProposal, TestCaseProposal
 from agents.reviewer_agent import ReviewDecision
 from agents import orchestrator
@@ -272,6 +274,73 @@ def test_process_codebase_sanitizes_api_error_explanation(tmp_path, monkeypatch)
     assert "openai/gpt-oss-120b" not in explanation
     assert "429" not in explanation
     assert "try again later" in explanation.lower()
+
+
+def test_extract_retry_after_seconds_parses_minutes_and_seconds():
+    assert orchestrator._extract_retry_after_seconds("Please try again in 5m46.896s.") == pytest.approx(346.896)
+
+
+def test_extract_retry_after_seconds_parses_seconds_only():
+    assert orchestrator._extract_retry_after_seconds("try again in 12.3s") == pytest.approx(12.3)
+
+
+def test_extract_retry_after_seconds_returns_none_when_absent():
+    assert orchestrator._extract_retry_after_seconds("Error code: 429 - rate_limit_exceeded") is None
+
+
+def test_process_codebase_backs_off_before_short_rate_limit_retry(tmp_path, monkeypatch):
+    """A short provider-hinted wait should be slept out, then retried, rather than
+    immediately re-hitting the same rate limit."""
+    monkeypatch.chdir(tmp_path)
+    sleep_calls = []
+    monkeypatch.setattr(orchestrator.time, "sleep", lambda s: sleep_calls.append(s))
+
+    calls = {"n": 0}
+
+    def flaky_then_ok(file_name, source_code, smells, feedback, config):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("Error code: 429 - rate limit reached. Please try again in 2.5s.")
+        return SAMPLE_REFACTOR
+
+    monkeypatch.setattr(orchestrator, "run_refactor_agent", flaky_then_ok)
+    monkeypatch.setattr(orchestrator, "run_test_agent", lambda proposal, config: SAMPLE_TEST)
+    monkeypatch.setattr(orchestrator, "run_reviewer_agent", _reviewer_approve_stub)
+    monkeypatch.setattr(
+        orchestrator, "execute_tests",
+        lambda refactored_code, test_code, use_docker=False: {"success": True, "output": "1 passed"},
+    )
+
+    results = orchestrator.process_codebase(SOURCE_WITH_SMELL, "bad.py", config={})
+
+    assert calls["n"] == 2  # retried after backing off
+    assert results[0]["validated"] is True
+    assert sleep_calls == [pytest.approx(2.5)]
+
+
+def test_process_codebase_gives_up_early_on_long_rate_limit_wait(tmp_path, monkeypatch):
+    """A long provider-hinted wait must not be slept out (would hang a live request) --
+    the pipeline should give up immediately instead of burning retries on the same limit."""
+    monkeypatch.chdir(tmp_path)
+
+    def fail_if_called(seconds):
+        raise AssertionError(f"should not sleep for a wait this long ({seconds}s)")
+
+    monkeypatch.setattr(orchestrator.time, "sleep", fail_if_called)
+
+    calls = {"n": 0}
+
+    def always_rate_limited(file_name, source_code, smells, feedback, config):
+        calls["n"] += 1
+        raise RuntimeError("Rate limit reached. Please try again in 5m46.896s.")
+
+    monkeypatch.setattr(orchestrator, "run_refactor_agent", always_rate_limited)
+
+    results = orchestrator.process_codebase(SOURCE_WITH_SMELL, "bad.py", config={})
+
+    assert calls["n"] == 1  # gave up immediately instead of burning remaining retries
+    assert results[0]["error_kind"] == "api_error"
+    assert results[0]["validated"] is False
 
 
 def test_classify_error_detects_api_signals():

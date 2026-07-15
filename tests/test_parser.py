@@ -167,6 +167,86 @@ def test_excessive_nesting_has_reason():
     assert "4" in smell.reason and "3" in smell.reason
 
 
+# --- Mutable Default Argument ---
+
+def test_mutable_list_default_flagged():
+    source = "def f(items=[]):\n    items.append(1)\n    return items\n"
+    assert "Mutable Default Argument" in smell_types(source)
+
+
+def test_mutable_dict_default_flagged():
+    source = "def f(options={}):\n    return options\n"
+    assert "Mutable Default Argument" in smell_types(source)
+
+
+def test_immutable_default_not_flagged():
+    source = "def f(count=0, name=None, label='x'):\n    return count\n"
+    assert "Mutable Default Argument" not in smell_types(source)
+
+
+def test_mutable_default_respects_config_toggle():
+    source = "def f(items=[]):\n    return items\n"
+    config = {**DEFAULT_CONFIG, "check_mutable_default_args": False}
+    assert "Mutable Default Argument" not in smell_types(source, config)
+
+
+# --- Magic Number ---
+
+def test_magic_number_in_comparison_flagged():
+    source = "def f(x):\n    return x > 42\n"
+    assert "Magic Number" in smell_types(source)
+
+
+def test_allowlisted_numbers_not_flagged():
+    source = "def f(x):\n    return x > 0 and x != 1 and x != -1\n"
+    assert "Magic Number" not in smell_types(source)
+
+
+def test_magic_number_respects_config_toggle():
+    source = "def f(x):\n    return x > 42\n"
+    config = {**DEFAULT_CONFIG, "check_magic_numbers": False}
+    assert "Magic Number" not in smell_types(source, config)
+
+
+def test_magic_number_respects_custom_allowlist():
+    source = "def f(x):\n    return x > 42\n"
+    config = {**DEFAULT_CONFIG, "magic_number_allowlist": [0, 1, -1, 42]}
+    assert "Magic Number" not in smell_types(source, config)
+
+
+# --- Unused Import ---
+
+def test_unused_import_flagged():
+    source = "import os\n\ndef f():\n    return 1\n"
+    assert "Unused Import" in smell_types(source)
+
+
+def test_used_import_not_flagged():
+    source = "import os\n\ndef f():\n    return os.getcwd()\n"
+    assert "Unused Import" not in smell_types(source)
+
+
+def test_used_from_import_with_alias_not_flagged():
+    source = "from collections import defaultdict as dd\n\ndef f():\n    return dd(int)\n"
+    assert "Unused Import" not in smell_types(source)
+
+
+def test_future_import_never_flagged():
+    source = "from __future__ import annotations\n\ndef f():\n    return 1\n"
+    assert "Unused Import" not in smell_types(source)
+
+
+def test_star_import_never_flagged():
+    source = "from os import *\n\ndef f():\n    return 1\n"
+    assert "Unused Import" not in smell_types(source)
+
+
+def test_unused_import_respects_config_toggle():
+    source = "import os\n\ndef f():\n    return 1\n"
+    config = {**DEFAULT_CONFIG, "check_unused_imports": False}
+    assert "Unused Import" not in smell_types(source, config)
+
+
 def test_infinite_loop_flagged_when_var_only_conditionally_updated():
     source = (
         "def f(c, d):\n"

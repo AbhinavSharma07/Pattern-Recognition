@@ -10,10 +10,13 @@ _SEVERITY_BY_ISSUE_TYPE = {
     "Discouraged 'os.system' call": HIGH,
     "Generic Exception": HIGH,
     "Bare Except": HIGH,
+    "Mutable Default Argument": HIGH,
     "Too Many Arguments": MEDIUM,
     "Excessive Nesting Depth": MEDIUM,
     "Long Function": MEDIUM,
     "Complex List Comprehension": LOW,
+    "Unused Import": LOW,
+    "Magic Number": LOW,
 }
 
 _SEVERITY_ORDER = {CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3}

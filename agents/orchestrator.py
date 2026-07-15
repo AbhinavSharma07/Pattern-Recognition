@@ -1,6 +1,8 @@
 import json
 import hashlib
 import logging
+import re
+import time
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
@@ -49,6 +51,27 @@ def _classify_error(e: Exception) -> str:
     if any(signal in text for signal in _API_ERROR_SIGNALS):
         return ERROR_KIND_API
     return ERROR_KIND_GENERATION
+
+
+# Matches provider hints like "Please try again in 5m46.896s" or "try again in 12.3s".
+_RETRY_AFTER_PATTERN = re.compile(r"try again in\s+(?:(\d+)m)?\s*([\d.]+)s", re.IGNORECASE)
+
+# Cap on how long we'll actually block a run waiting out a rate limit -- a live
+# Gradio request shouldn't hang for minutes. Longer waits fail fast instead,
+# so the remaining retries aren't wasted retrying into the same limit.
+MAX_AUTO_BACKOFF_SECONDS = 30.0
+
+
+def _extract_retry_after_seconds(text: str) -> Optional[float]:
+    """Parses a provider's 'try again in <N>s' / '<M>m<N>s' hint out of an error message, if present."""
+    match = _RETRY_AFTER_PATTERN.search(text)
+    if not match:
+        return None
+    minutes, seconds = match.groups()
+    total = float(seconds)
+    if minutes:
+        total += int(minutes) * 60
+    return total
 
 
 # --- 1. Define the State for our Graph ---
@@ -252,6 +275,17 @@ def process_codebase(
             print("[!] Maximum retries reached. Refactoring could not be validated.\n")
             return "end"
         if state.feedback: # If there's feedback from reviewer or sandbox
+            if state.error_kind == ERROR_KIND_API:
+                wait_seconds = _extract_retry_after_seconds(state.feedback)
+                if wait_seconds is not None:
+                    if wait_seconds > MAX_AUTO_BACKOFF_SECONDS:
+                        print(
+                            f"[!] Provider asked to wait {wait_seconds:.1f}s -- too long to "
+                            "block on. Giving up instead of burning retries on the same limit.\n"
+                        )
+                        return "end"
+                    print(f"[*] Rate-limited; waiting {wait_seconds:.1f}s before retrying...")
+                    time.sleep(wait_seconds)
             return "refactor" # Go back to the start
         return "sandbox" # Proceed to validation
 

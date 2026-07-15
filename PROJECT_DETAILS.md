@@ -32,9 +32,14 @@ The system is designed with a modular architecture, divided into three primary p
 
 1.  **Static Analysis Engine:**
     -   **Purpose:** Parses raw Python files into Abstract Syntax Trees (ASTs).
+    -   **Syntax Validation:** `core/parser.py::check_syntax` runs `ast.parse` before anything else. A file
+        that fails to parse never reaches AST analysis, the AI agents, test generation, or sandbox
+        validation — the CLI (`scan`/`fix`) and the Gradio UI instead render a dedicated "Syntax Analysis"
+        report (line/column/message of the `SyntaxError`) and move on to the next file.
     -   **Functionality:** Identifies predefined "code smells" (e.g., excessive function arguments, deep
-        nesting, bare `except` clauses, a heuristic "potential infinite loop" check). Each smell carries a
-        deterministic, AST-derived `reason` string and is classified into a severity (`core/severity.py`:
+        nesting, bare `except` clauses, a heuristic "potential infinite loop" check, mutable default
+        arguments, unused imports, magic numbers in comparisons). Each smell carries a deterministic,
+        AST-derived `reason` string and is classified into a severity (`core/severity.py`:
         Critical/High/Medium/Low) used to sort the smells list most-severe-first before refactoring.
     -   **Output:** Extracts the problematic code context into structured `CodeSmell` data objects.
     -   **Metrics:** `core/metrics.py` independently computes deterministic AST metrics (cyclomatic
@@ -54,6 +59,12 @@ The system is designed with a modular architecture, divided into three primary p
     -   **LLM Backends:** `agents/llm_factory.py` builds the chat model per `config.json`'s `llm_backend`
         (OpenAI, Ollama, or Groq — Groq needs `method="function_calling"` for structured output since its
         strict `json_schema` mode rejects some models).
+    -   **Rate-Limit Backoff:** When a node's LLM call fails with a classified `api_error` (see section 6),
+        `should_continue` parses a provider's "try again in `<N>`s" hint out of the error text. Short waits
+        (≤30s) are slept out before the automatic retry; longer waits give up immediately instead of
+        burning the remaining retry budget re-hitting the same limit, and instead fall through to the
+        sanitized `_API_ERROR_USER_MESSAGE`. The raw provider exception is only ever logged
+        (`logging.getLogger(__name__)`), never rendered in a report.
 
 3.  **Sandbox Validation Engine:**
     -   **Purpose:** Safely executes the refactored code and its generated tests.
@@ -196,6 +207,16 @@ These were listed as "V2 & Beyond" ideas but are implemented in v1:
     condition variable is never unconditionally updated in the loop body. This is a best-effort heuristic,
     not a soundness guarantee (loop termination is undecidable in general per Rice's theorem), and is always
     reported as "Potential", never asserted as fact.
+-   **Pre-AST Syntax Validation** — a file that fails to parse gets a dedicated "Syntax Analysis" report
+    (line/column/message) and the pipeline stops immediately; it never silently reports "no smells found"
+    for code that was never actually analyzed.
+-   **Sanitized AI/API Error Reporting** — a raw provider exception (model name, org ID, billing links, raw
+    JSON body) is only ever logged internally; the report shows a generic, friendly message instead.
+-   **Rate-Limit Backoff** — a classified `api_error` triggers an automatic short backoff-and-retry (or a
+    fast, non-blocking give-up on a long provider-hinted wait) instead of immediately re-hitting the same
+    limit on every retry.
+-   **More Built-in Smell Categories** — mutable default arguments, unused imports (respecting aliases,
+    `__future__`, and `import *`), and magic numbers in comparisons, alongside the original smell set.
 
 ## 7. Genuinely Open (V2 & Beyond)
 -   **Custom Anti-Pattern Rules:** `config.json` already supports user-defined `Call`/`Import`/`Decorator`

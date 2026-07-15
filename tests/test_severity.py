@@ -5,9 +5,12 @@ def test_known_severities():
     assert get_severity("Potential Infinite Loop") == CRITICAL
     assert get_severity("Discouraged 'os.system' call") == HIGH
     assert get_severity("Generic Exception") == HIGH
+    assert get_severity("Mutable Default Argument") == HIGH
     assert get_severity("Too Many Arguments") == MEDIUM
     assert get_severity("Excessive Nesting Depth") == MEDIUM
     assert get_severity("Complex List Comprehension") == LOW
+    assert get_severity("Unused Import") == LOW
+    assert get_severity("Magic Number") == LOW
 
 
 def test_unknown_issue_type_defaults_to_medium():

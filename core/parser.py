@@ -14,6 +14,10 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "check_generic_exception": True,
     "max_list_comp_ifs": 2,
     "check_infinite_loops": True,
+    "check_mutable_default_args": True,
+    "check_unused_imports": True,
+    "check_magic_numbers": True,
+    "magic_number_allowlist": [0, 1, -1],
     "custom_rules": [],
 }
 
@@ -34,6 +38,11 @@ class AntiPatternVisitor(ast.NodeVisitor):
         for rule in self.config.get("custom_rules", []):
             if rule.get("enabled", True) and "type" in rule and "match" in rule:
                 self.custom_rules_by_type[rule["type"]].append(rule)
+
+        # Tracked across the whole traversal for the unused-import check, which
+        # can only be resolved once every Name usage in the file is known (see finalize()).
+        self.imported_names: Dict[str, ast.AST] = {}
+        self.used_names: Set[str] = set()
 
     def _get_node_code(self, node: ast.AST) -> str:
         """Extracts the raw source code for a given AST node."""
@@ -115,6 +124,19 @@ class AntiPatternVisitor(ast.NodeVisitor):
                         reason=f"Matches configured rule '{rule.get('name', decorator_name)}' (decorator: @{decorator_name}).",
                     )
 
+        if self.config.get("check_mutable_default_args", True):
+            defaults = [d for d in (*node.args.defaults, *node.args.kw_defaults) if d is not None]
+            for default in defaults:
+                if isinstance(default, (ast.List, ast.Dict, ast.Set)):
+                    self._add_smell(
+                        "Mutable Default Argument", node.name, node,
+                        reason=(
+                            f"Function '{node.name}' uses a mutable {type(default).__name__.lower()} literal "
+                            "as a default argument value. Default values are evaluated once, so this object "
+                            "is shared and mutated across every call that doesn't override it."
+                        ),
+                    )
+
         self.generic_visit(node)
 
     visit_AsyncFunctionDef = visit_FunctionDef
@@ -146,6 +168,31 @@ class AntiPatternVisitor(ast.NodeVisitor):
             )
         self.generic_visit(node)
 
+    def visit_Compare(self, node: ast.Compare):
+        """Checks for unexplained numeric literals used directly in a comparison."""
+        if self.config.get("check_magic_numbers", True):
+            allowlist = set(self.config.get("magic_number_allowlist", [0, 1, -1]))
+            for value_node in (node.left, *node.comparators):
+                if (
+                    isinstance(value_node, ast.Constant)
+                    and isinstance(value_node.value, (int, float))
+                    and not isinstance(value_node.value, bool)
+                    and value_node.value not in allowlist
+                ):
+                    self._add_smell(
+                        "Magic Number", repr(value_node.value), node,
+                        reason=(
+                            f"Comparison uses the unexplained numeric literal {value_node.value!r} directly; "
+                            "naming it as a constant would make its meaning clear."
+                        ),
+                    )
+        self.generic_visit(node)
+
+    def visit_Name(self, node: ast.Name):
+        """Records every identifier reference, used by the unused-import check in finalize()."""
+        self.used_names.add(node.id)
+        self.generic_visit(node)
+
     def visit_Call(self, node: ast.Call):
         """Checks for disallowed function calls based on custom rules."""
         dotted_name = self._get_dotted_call_name(node)
@@ -164,6 +211,8 @@ class AntiPatternVisitor(ast.NodeVisitor):
         """Checks for disallowed 'import <module>' statements."""
         for alias in node.names:
             module_name = alias.name
+            bound_name = alias.asname or module_name.split(".")[0]
+            self.imported_names.setdefault(bound_name, node)
             for rule in self.custom_rules_by_type.get("Import", []):
                 if rule.get("match") == module_name:
                     self._add_smell(
@@ -175,6 +224,14 @@ class AntiPatternVisitor(ast.NodeVisitor):
     def visit_ImportFrom(self, node: ast.ImportFrom):
         """Checks for disallowed 'from <module> import ...' statements."""
         module_name = node.module or ""
+        # A '__future__' import is a compiler directive, never referenced by name --
+        # and 'import *' can't be tracked since we don't know what names it binds.
+        if module_name != "__future__":
+            for alias in node.names:
+                if alias.name == "*":
+                    continue
+                bound_name = alias.asname or alias.name
+                self.imported_names.setdefault(bound_name, node)
         for rule in self.custom_rules_by_type.get("Import", []):
             if rule.get("match") == module_name:
                 self._add_smell(
@@ -214,6 +271,17 @@ class AntiPatternVisitor(ast.NodeVisitor):
                     return False
         return True
 
+    def finalize(self):
+        """Post-traversal checks that need the whole file seen first (e.g. unused
+        imports, which can't be judged until every Name reference is known)."""
+        if self.config.get("check_unused_imports", True):
+            for bound_name, import_node in self.imported_names.items():
+                if bound_name not in self.used_names:
+                    self._add_smell(
+                        "Unused Import", bound_name, import_node,
+                        reason=f"'{bound_name}' is imported but never referenced elsewhere in the file.",
+                    )
+
 
 def check_syntax(source_code: str, file_name: str = "<string>") -> Optional[SyntaxIssue]:
     """
@@ -240,6 +308,7 @@ def analyze_source_code(source_code: str, file_name: str, config: Dict[str, Any]
         tree = ast.parse(source_code)
         visitor = AntiPatternVisitor(source_code, file_name, config or {})
         visitor.visit(tree)
+        visitor.finalize()
         return visitor.smells
     except SyntaxError as e:
         print(f"Could not parse {file_name} due to a syntax error: {e}")
