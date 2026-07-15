@@ -1,7 +1,10 @@
+import re
 from langchain_core.prompts import ChatPromptTemplate
 from core.schemas import CodeSmell, RefactorProposal
 from agents.llm_factory import build_structured_llm
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
+
+_CODE_FENCE_PATTERN = re.compile(r"```(?:python)?\s*\n(.*?)```", re.DOTALL)
 
 def get_refactor_agent(config: Dict[str, Any] = None):
     """
@@ -50,6 +53,43 @@ def _format_issues_summary(smells: List[CodeSmell]) -> str:
         for i, smell in enumerate(smells, 1)
     )
 
+def _salvage_refactor_from_tool_failure(e: Exception, file_name: str) -> Optional[RefactorProposal]:
+    """
+    Some models occasionally answer with a plain-text code block instead of invoking
+    the structured-output tool call, which the provider then rejects outright (Groq:
+    400 'tool_use_failed') -- even though the model's actual answer, carried in the
+    error body's 'failed_generation' field, is usually a perfectly usable refactor.
+    Recovers that answer instead of discarding a good result and burning a retry.
+
+    Returns None (letting the caller re-raise) for any error that isn't this exact,
+    recoverable shape.
+    """
+    body = getattr(e, "body", None)
+    error = body.get("error") if isinstance(body, dict) else None
+    if not isinstance(error, dict) or error.get("code") != "tool_use_failed":
+        return None
+
+    raw_text = error.get("failed_generation")
+    if not raw_text:
+        return None
+
+    match = _CODE_FENCE_PATTERN.search(raw_text)
+    code = (match.group(1) if match else raw_text).strip()
+    if not code:
+        return None
+
+    return RefactorProposal(
+        original_function_name=file_name,
+        explanation=(
+            "Recovered from a tool-invocation failure: the model produced a valid-looking "
+            "refactor but the API rejected the response for not using the expected "
+            "structured-output format. The refactored code below is the model's original "
+            "answer, salvaged as-is -- review it carefully before relying on it."
+        ),
+        refactored_code=code,
+    )
+
+
 def run_refactor_agent(
     file_name: str,
     source_code: str,
@@ -74,5 +114,10 @@ def run_refactor_agent(
     else:
         inputs["feedback_section"] = ""
 
-    response = agent.invoke(inputs)
-    return response
+    try:
+        return agent.invoke(inputs)
+    except Exception as e:
+        salvaged = _salvage_refactor_from_tool_failure(e, file_name)
+        if salvaged is not None:
+            return salvaged
+        raise

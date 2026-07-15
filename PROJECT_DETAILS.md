@@ -54,6 +54,10 @@ The system is designed with a modular architecture, divided into three primary p
         -   **Refactor Agent:** Takes all `CodeSmell`s detected in a file (severity-sorted) and generates a
             single `RefactorProposal` (refactored code, explanation, new imports) addressing every issue in
             that file at once ("unified refactoring" — see section 6), using an LLM with structured outputs.
+            If the provider rejects the call with a `tool_use_failed` error (the model answered in plain
+            text instead of invoking the structured-output tool), `refactor_agent.py`'s
+            `_salvage_refactor_from_tool_failure` recovers the model's already-correct answer from the
+            error body's `failed_generation` field rather than discarding it and burning a retry.
         -   **Test Agent:** Takes the `RefactorProposal` and generates a `TestCaseProposal` (pytest code) using an LLM with structured outputs.
         -   **Reviewer Agent:** An LLM gatekeeper that approves/rejects a refactor+test pair before it ever reaches the sandbox.
     -   **LLM Backends:** `agents/llm_factory.py` builds the chat model per `config.json`'s `llm_backend`
@@ -217,6 +221,10 @@ These were listed as "V2 & Beyond" ideas but are implemented in v1:
     limit on every retry.
 -   **More Built-in Smell Categories** — mutable default arguments, unused imports (respecting aliases,
     `__future__`, and `import *`), and magic numbers in comparisons, alongside the original smell set.
+-   **Tool-Call-Failure Salvage** — when a provider rejects a structured-output call because the model
+    answered in plain text instead of invoking the tool (observed live as Groq's `tool_use_failed`), the
+    Refactor Agent recovers that already-correct answer from the error body instead of discarding it and
+    burning a retry on a response that would likely have worked.
 
 ## 7. Genuinely Open (V2 & Beyond)
 -   **Custom Anti-Pattern Rules:** `config.json` already supports user-defined `Call`/`Import`/`Decorator`
