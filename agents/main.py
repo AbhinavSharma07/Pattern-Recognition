@@ -251,6 +251,8 @@ def _render_result_section(res: dict) -> str:
         fromfile='original', tofile='refactored',
     )
 
+    code_heading = "Final Refactored Code" if res.get("validated", False) else "Proposed Refactored Code (unvalidated -- review before use)"
+
     return "\n".join([
         f"## Unified Refactor ({status})",
         f"### Agent Execution\n```\n{build_execution_trace(res)}\n```\n",
@@ -258,6 +260,7 @@ def _render_result_section(res: dict) -> str:
         f"### AST Metrics\n{build_metrics_table(res)}\n",
         f"### Explanation\n{refactor.explanation}\n",
         f"### Code Diff\n```diff\n{''.join(diff)}\n```\n",
+        f"### {code_heading}\n```python\n{refactor.refactored_code}\n```\n",
         f"### Generated Test\n```python\n{test.pytest_code}\n```\n---\n",
     ])
 

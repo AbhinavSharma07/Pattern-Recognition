@@ -21,6 +21,21 @@ def _make_smell(target_name="f", issue_type="Too Many Arguments"):
     return CodeSmell(file_name="pasted_code.py", target_name=target_name, line_number=1, issue_type=issue_type, raw_code=SOURCE_WITH_SMELL)
 
 
+def test_render_result_includes_final_code_when_validated():
+    rendered = app._render_result(SAMPLE_RESULT)
+
+    assert "Final Refactored Code" in rendered
+    assert "def f(*args):\n    pass" in rendered
+
+
+def test_render_result_labels_code_as_unvalidated_when_not_validated():
+    result = dict(SAMPLE_RESULT, validated=False)
+    rendered = app._render_result(result)
+
+    assert "Proposed Refactored Code" in rendered
+    assert "unvalidated" in rendered.lower()
+
+
 def test_run_analysis_no_input_returns_warning():
     message, report = app.run_analysis("", [], False, "{}")
     assert "paste some code" in message.lower()

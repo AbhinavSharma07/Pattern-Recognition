@@ -1,6 +1,12 @@
 """Tests for agents.main's shared report-rendering logic, used by both the CLI and Gradio UI."""
-from core.schemas import CodeSmell, RefactorProposal, SyntaxIssue
-from agents.main import build_syntax_error_report, status_label, build_execution_trace, build_metrics_table
+from core.schemas import CodeSmell, RefactorProposal, TestCaseProposal, SyntaxIssue
+from agents.main import (
+    build_syntax_error_report,
+    build_markdown_report,
+    status_label,
+    build_execution_trace,
+    build_metrics_table,
+)
 
 
 def test_validated_result():
@@ -119,6 +125,36 @@ def test_metrics_table_handles_unparseable_original_source():
     res = {"smells": [], "source_code": "def f(:\n", "refactor": None, "validated": False, "config": {}}
     table = build_metrics_table(res)
     assert "unavailable" in table.lower()
+
+
+# --- Full refactored code section ---
+
+def _make_result(validated: bool) -> dict:
+    return {
+        "smells": [SAMPLE_SMELL],
+        "source_code": SAMPLE_SMELL.raw_code,
+        "refactor": RefactorProposal(
+            original_function_name="f", explanation="x", refactored_code="def f(*args):\n    pass\n",
+        ),
+        "test": TestCaseProposal(target_function_name="f", pytest_code="def test_f():\n    pass\n"),
+        "validated": validated,
+        "config": {},
+    }
+
+
+def test_report_includes_final_code_when_validated():
+    report = build_markdown_report([_make_result(validated=True)])
+
+    assert "Final Refactored Code" in report
+    assert "def f(*args):\n    pass" in report
+
+
+def test_report_labels_code_as_unvalidated_when_not_validated():
+    report = build_markdown_report([_make_result(validated=False)])
+
+    assert "Proposed Refactored Code" in report
+    assert "unvalidated" in report.lower()
+    assert "def f(*args):\n    pass" in report
 
 
 # --- build_syntax_error_report ---

@@ -65,6 +65,8 @@ def _render_result(res: dict) -> str:
         f"**AI Explanation:** {refactor.explanation}\n",
         "**Code Diff**",
         f"```diff\n{''.join(diff)}\n```",
+        "**Final Refactored Code**" if res.get("validated", False) else "**Proposed Refactored Code (unvalidated -- review before use)**",
+        f"```python\n{refactor.refactored_code}\n```",
         "**Generated Pytest Validation**",
         f"```python\n{test.pytest_code}\n```",
         "---",
