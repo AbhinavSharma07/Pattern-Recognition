@@ -3,8 +3,8 @@ import sys
 import typer
 import difflib
 from pathlib import Path
-from typing import Dict, List
-from core.parser import analyze_source_code, load_config
+from typing import Any, Dict, List
+from core.parser import analyze_source_code, check_syntax, load_config
 from core.metrics import compute_metrics
 from core.severity import get_severity
 from agents.orchestrator import process_codebase
@@ -51,8 +51,15 @@ def scan(
 
     for file_path in files_to_scan:
         source_code = file_path.read_text(encoding="utf-8")
+
+        syntax_issue = check_syntax(source_code, str(file_path))
+        if syntax_issue:
+            typer.secho(f"\n❌ Syntax error in {file_path}:", fg=typer.colors.RED)
+            typer.echo(f"  Line {syntax_issue.line_number}, Column {syntax_issue.column_number}: {syntax_issue.message}")
+            continue
+
         smells = analyze_source_code(source_code, str(file_path), custom_config)
-        
+
         if smells:
             total_smells += len(smells)
             typer.secho(f"\n⚠️ Found {len(smells)} code smell(s) in {file_path}:", fg=typer.colors.YELLOW)
@@ -80,8 +87,19 @@ def fix(
     
     for file_path in files_to_fix:
         source_code = file_path.read_text(encoding="utf-8")
+
+        syntax_issue = check_syntax(source_code, str(file_path))
+        if syntax_issue:
+            typer.secho(f"\n❌ Syntax error in {file_path} -- skipping (no AI agents invoked):", fg=typer.colors.RED)
+            typer.echo(f"  Line {syntax_issue.line_number}, Column {syntax_issue.column_number}: {syntax_issue.message}")
+            if report:
+                report_path = file_path.with_name(f"{file_path.stem}_refactor_report.md")
+                report_path.write_text(build_syntax_error_report(syntax_issue), encoding="utf-8")
+                typer.secho(f"📄 Syntax error report saved to: {report_path}", fg=typer.colors.YELLOW)
+            continue
+
         typer.secho(f"\n🚀 Starting multi-agent refactoring on {file_path}...\n", fg=typer.colors.CYAN)
-        
+
         results = process_codebase(source_code, file_path.name, use_docker=docker, config=custom_config)
         
         if results and report:
@@ -244,6 +262,20 @@ def _render_result_section(res: dict) -> str:
     ])
 
 
+def build_syntax_error_report(syntax_issue) -> str:
+    """Dedicated report for a file that failed the pre-AST syntax check -- no smells,
+    no AI agents, and no tests are ever invoked for it."""
+    return "\n".join([
+        "# Syntax Analysis\n",
+        "**Status:**\n❌ Failed\n",
+        "**Reason:**\nPython syntax error detected.\n",
+        f"**Line:**\n{syntax_issue.line_number}\n",
+        f"**Column:**\n{syntax_issue.column_number}\n",
+        f"**Message:**\n{syntax_issue.message}\n",
+        "Static analysis cannot continue until the syntax errors are fixed.",
+    ])
+
+
 def build_markdown_report(results: list) -> str:
     """Builds a Markdown report string for a single file's worth of results."""
     lines = ["# Refactoring Report\n"]
@@ -251,12 +283,16 @@ def build_markdown_report(results: list) -> str:
     return "\n".join(lines)
 
 
-def build_combined_markdown_report(results_by_file: Dict[str, list]) -> str:
-    """Builds one combined Markdown report covering multiple files' results (used by the Gradio UI)."""
+def build_combined_markdown_report(results_by_file: Dict[str, list], syntax_errors_by_file: Dict[str, Any] = None) -> str:
+    """Builds one combined Markdown report covering multiple files' results (used by the Gradio UI).
+    syntax_errors_by_file maps file_name -> SyntaxIssue for files that never reached AST analysis."""
     lines = ["# Refactoring Report\n"]
     for file_name, results in results_by_file.items():
         lines.append(f"# File: `{file_name}`\n")
         lines.extend(_render_result_section(res) for res in results)
+    for file_name, syntax_issue in (syntax_errors_by_file or {}).items():
+        lines.append(f"# File: `{file_name}`\n")
+        lines.append(build_syntax_error_report(syntax_issue))
     return "\n".join(lines)
 
 

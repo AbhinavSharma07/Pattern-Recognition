@@ -1,6 +1,6 @@
 """Tests for agents.main's shared report-rendering logic, used by both the CLI and Gradio UI."""
-from core.schemas import CodeSmell, RefactorProposal
-from agents.main import status_label, build_execution_trace, build_metrics_table
+from core.schemas import CodeSmell, RefactorProposal, SyntaxIssue
+from agents.main import build_syntax_error_report, status_label, build_execution_trace, build_metrics_table
 
 
 def test_validated_result():
@@ -119,3 +119,17 @@ def test_metrics_table_handles_unparseable_original_source():
     res = {"smells": [], "source_code": "def f(:\n", "refactor": None, "validated": False, "config": {}}
     table = build_metrics_table(res)
     assert "unavailable" in table.lower()
+
+
+# --- build_syntax_error_report ---
+
+def test_syntax_error_report_includes_line_column_and_message():
+    issue = SyntaxIssue(line_number=3, column_number=7, message="invalid syntax")
+    report = build_syntax_error_report(issue)
+
+    assert "Syntax Analysis" in report
+    assert "Failed" in report
+    assert "3" in report
+    assert "7" in report
+    assert "invalid syntax" in report
+    assert "cannot continue" in report.lower()

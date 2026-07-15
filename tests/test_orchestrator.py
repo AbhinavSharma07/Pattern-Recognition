@@ -248,6 +248,32 @@ def test_process_codebase_clears_stale_test_after_later_refactor_failure(tmp_pat
     assert "No test could be generated" in results[0]["test"].pytest_code
 
 
+def test_process_codebase_sanitizes_api_error_explanation(tmp_path, monkeypatch):
+    """A raw provider exception (model names, org IDs, billing links, ...) must never
+    reach the user-facing explanation -- only a generic, friendly message should."""
+    monkeypatch.chdir(tmp_path)
+
+    raw_error = (
+        "Error code: 429 - {'error': {'message': 'Rate limit reached for model "
+        "openai/gpt-oss-120b in organization org_01kxdna03pfh7vdg8tcbw4s53n "
+        "service tier on_demand', 'type': 'tokens', 'code': 'rate_limit_exceeded'}}"
+    )
+
+    def rate_limited(file_name, source_code, smells, feedback, config):
+        raise RuntimeError(raw_error)
+
+    monkeypatch.setattr(orchestrator, "run_refactor_agent", rate_limited)
+
+    results = orchestrator.process_codebase(SOURCE_WITH_SMELL, "bad.py", config={})
+
+    explanation = results[0]["refactor"].explanation
+    assert results[0]["error_kind"] == "api_error"
+    assert "org_01kxdna03pfh7vdg8tcbw4s53n" not in explanation
+    assert "openai/gpt-oss-120b" not in explanation
+    assert "429" not in explanation
+    assert "try again later" in explanation.lower()
+
+
 def test_classify_error_detects_api_signals():
     assert orchestrator._classify_error(RuntimeError("HTTP 429 Too Many Requests")) == "api_error"
     assert orchestrator._classify_error(RuntimeError("Rate limit exceeded")) == "api_error"

@@ -10,10 +10,16 @@ try:
 except ImportError:
     spaces = None
 
-from core.parser import load_config
+from core.parser import check_syntax, load_config
 from core.severity import get_severity
 from agents.orchestrator import process_codebase
-from agents.main import build_combined_markdown_report, build_execution_trace, build_metrics_table, status_label
+from agents.main import (
+    build_combined_markdown_report,
+    build_execution_trace,
+    build_metrics_table,
+    build_syntax_error_report,
+    status_label,
+)
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -92,16 +98,27 @@ def run_analysis(code_input: str, uploaded_files, use_docker: bool, config_text:
     # Scope the cache per browser session so results aren't shared across visitors.
     cache_namespace = request.session_hash if request is not None else None
 
-    results_by_file = {
-        file_name: process_codebase(source, file_name, use_docker, config, cache_namespace=cache_namespace)
-        for file_name, source in files_to_process
-    }
+    # Files with a syntax error never reach AST analysis or the AI agents -- they
+    # get a dedicated syntax report instead of a misleading "no issues found".
+    syntax_errors_by_file = {}
+    results_by_file = {}
+    for file_name, source in files_to_process:
+        syntax_issue = check_syntax(source, file_name)
+        if syntax_issue:
+            syntax_errors_by_file[file_name] = syntax_issue
+            continue
+        results_by_file[file_name] = process_codebase(source, file_name, use_docker, config, cache_namespace=cache_namespace)
 
     total_smells = sum(len(r["smells"]) for results in results_by_file.values() for r in results)
-    if total_smells == 0:
+    if total_smells == 0 and not syntax_errors_by_file:
         return "✅ No structural code smells detected across all file(s). Your code is clean!", None
 
-    lines = [f"### 🔍 Found and processed {total_smells} code smell(s) across {len(files_to_process)} file(s)\n"]
+    lines = []
+    if total_smells:
+        lines.append(f"### 🔍 Found and processed {total_smells} code smell(s) across {len(files_to_process)} file(s)\n")
+    for file_name, syntax_issue in syntax_errors_by_file.items():
+        lines.append(f"## 📄 `{file_name}`\n")
+        lines.append(build_syntax_error_report(syntax_issue))
     for file_name, results in results_by_file.items():
         if not results:
             continue
@@ -109,7 +126,9 @@ def run_analysis(code_input: str, uploaded_files, use_docker: bool, config_text:
         lines.extend(_render_result(res) for res in results)
 
     non_empty_results = {name: results for name, results in results_by_file.items() if results}
-    REPORT_PATH.write_text(build_combined_markdown_report(non_empty_results), encoding="utf-8")
+    REPORT_PATH.write_text(
+        build_combined_markdown_report(non_empty_results, syntax_errors_by_file), encoding="utf-8"
+    )
 
     return "\n".join(lines), str(REPORT_PATH)
 

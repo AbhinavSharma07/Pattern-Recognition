@@ -1,9 +1,12 @@
 import json
 import hashlib
+import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 from langgraph.graph import StateGraph, END
+
+logger = logging.getLogger(__name__)
 
 from core.parser import analyze_source_code
 from core.sandbox import execute_tests
@@ -25,6 +28,14 @@ STAGE_SANDBOX = "sandbox"
 
 ERROR_KIND_API = "api_error"
 ERROR_KIND_GENERATION = "generation_error"
+
+_API_ERROR_USER_MESSAGE = (
+    "The refactoring process could not be completed because the AI service is "
+    "temporarily unavailable or has reached its usage limit.\n\n"
+    "No refactored code was generated.\n\n"
+    "Validation and test generation were skipped.\n\n"
+    "Please try again later."
+)
 
 _API_ERROR_SIGNALS = (
     "rate limit", "rate_limit", "429", "quota", "insufficient_quota",
@@ -269,9 +280,19 @@ def process_codebase(
         # produced a usable proposal). Fall back to placeholder objects rather than
         # None, so report/UI/apply code downstream can keep assuming real objects.
         error_note = final_state.get("feedback") or "Agent pipeline failed for an unknown reason."
+        error_kind = final_state.get("error_kind")
+        # Full detail (may include provider internals) goes to the log, never to the report.
+        logger.error(
+            "Refactor pipeline gave up on %s (stage=%s, error_kind=%s): %s",
+            file_name, final_state.get("stage"), error_kind, error_note,
+        )
+        if error_kind == ERROR_KIND_API:
+            explanation = _API_ERROR_USER_MESSAGE
+        else:
+            explanation = f"Refactoring failed after exhausting retries. Last error: {error_note}"
         refactor_proposal = final_state.get("refactor_proposal") or RefactorProposal(
             original_function_name=file_name,
-            explanation=f"Refactoring failed after exhausting retries. Last error: {error_note}",
+            explanation=explanation,
             refactored_code=source_code,
         )
         test_proposal = final_state.get("test_proposal") or TestCaseProposal(

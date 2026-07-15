@@ -27,3 +27,9 @@ class TestCaseProposal(BaseModel):
     """The structured response expected from the LLM Testing Agent."""
     target_function_name: str = Field(description="The name of the function being tested.")
     pytest_code: str = Field(description="A complete pytest function to validate the refactored code.")
+
+class SyntaxIssue(BaseModel):
+    """A Python syntax error found before AST analysis could even begin."""
+    line_number: int = Field(description="1-based line number where the syntax error was detected.")
+    column_number: int = Field(description="1-based column offset where the syntax error was detected.")
+    message: str = Field(description="The raw Python syntax error message (e.g. from SyntaxError.msg).")

@@ -100,6 +100,26 @@ def test_run_analysis_forces_docker_off_on_hf_space(monkeypatch):
     assert captured["use_docker"] is False
 
 
+def test_run_analysis_syntax_error_skips_pipeline_entirely(monkeypatch, tmp_path):
+    """A syntax error must short-circuit before AST analysis or any AI agent runs,
+    and must never be misreported as 'no smells found'."""
+    monkeypatch.chdir(tmp_path)
+    called = {"n": 0}
+
+    def fake_process_codebase(*a, **k):
+        called["n"] += 1
+        return []
+
+    monkeypatch.setattr(app, "process_codebase", fake_process_codebase)
+
+    message, report = app.run_analysis("def f(:\n    pass\n", [], False, "{}")
+
+    assert called["n"] == 0  # the multi-agent pipeline was never invoked
+    assert "syntax" in message.lower()
+    assert "failed" in message.lower()
+    assert "no structural code smells" not in message.lower()
+
+
 def test_run_analysis_scopes_cache_to_session(monkeypatch):
     """One visitor's cached result must never be served to a different visitor."""
     captured = {}

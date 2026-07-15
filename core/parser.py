@@ -1,9 +1,9 @@
 import ast
 import json
 from pathlib import Path
-from typing import List, Dict, Any, Set
+from typing import List, Dict, Any, Optional, Set
 from collections import defaultdict
-from .schemas import CodeSmell
+from .schemas import CodeSmell, SyntaxIssue
 from .metrics import max_nesting_depth as _shared_max_nesting_depth
 
 DEFAULT_CONFIG: Dict[str, Any] = {
@@ -213,6 +213,23 @@ class AntiPatternVisitor(ast.NodeVisitor):
                 if stmt.target.id in condition_vars:
                     return False
         return True
+
+
+def check_syntax(source_code: str, file_name: str = "<string>") -> Optional[SyntaxIssue]:
+    """
+    Validates that source_code is parseable Python, before any AST analysis or
+    agent pipeline runs. Returns None if the code is syntactically valid, or a
+    SyntaxIssue describing where/why it isn't.
+    """
+    try:
+        ast.parse(source_code, filename=file_name)
+        return None
+    except SyntaxError as e:
+        return SyntaxIssue(
+            line_number=e.lineno or 0,
+            column_number=e.offset or 0,
+            message=e.msg,
+        )
 
 
 def analyze_source_code(source_code: str, file_name: str, config: Dict[str, Any] = None) -> List[CodeSmell]:

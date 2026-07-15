@@ -1,4 +1,4 @@
-from core.parser import analyze_source_code, load_config, DEFAULT_CONFIG
+from core.parser import analyze_source_code, check_syntax, load_config, DEFAULT_CONFIG
 
 
 def smell_types(source, config=None):
@@ -121,6 +121,18 @@ def test_clean_code_has_no_smells():
 
 def test_syntax_error_returns_empty_list():
     assert analyze_source_code("def f(:\n", "bad.py", DEFAULT_CONFIG) == []
+
+
+def test_check_syntax_returns_none_for_valid_code():
+    assert check_syntax("def add(a, b):\n    return a + b\n") is None
+
+
+def test_check_syntax_reports_line_column_and_message_for_invalid_code():
+    issue = check_syntax("def f(:\n    pass\n", "bad.py")
+    assert issue is not None
+    assert issue.line_number == 1
+    assert issue.column_number > 0
+    assert issue.message
 
 
 def test_load_config_missing_file_returns_defaults(tmp_path):
