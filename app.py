@@ -19,6 +19,7 @@ from agents.main import (
     build_metrics_table,
     build_syntax_error_report,
     status_label,
+    VALIDATION_CAVEAT,
 )
 from dotenv import load_dotenv
 
@@ -56,9 +57,13 @@ def _render_result(res: dict) -> str:
         fromfile='original', tofile='refactored',
     )
 
-    return "\n".join([
+    sections = [
         f"### Unified Refactor — {len(smells)} issue(s) addressed",
         f"**Validation Status:** {status}\n",
+    ]
+    if res.get("validated", False):
+        sections.append(f"{VALIDATION_CAVEAT}\n")
+    sections += [
         f"**Agent Execution**\n```\n{build_execution_trace(res)}\n```\n",
         f"**Issues Addressed:**\n{issues_list}\n",
         f"**AST Metrics**\n{build_metrics_table(res)}\n",
@@ -70,7 +75,8 @@ def _render_result(res: dict) -> str:
         "**Generated Pytest Validation**",
         f"```python\n{test.pytest_code}\n```",
         "---",
-    ])
+    ]
+    return "\n".join(sections)
 
 
 def run_analysis(code_input: str, uploaded_files, use_docker: bool, config_text: str, request: gr.Request = None):

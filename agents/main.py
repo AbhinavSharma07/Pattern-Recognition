@@ -126,6 +126,17 @@ def apply_validated_fixes(source_code: str, results: list) -> tuple:
             return res["refactor"].refactored_code, 1
     return source_code, 0
 
+VALIDATION_CAVEAT = (
+    "> **Note on validation:** \"VALIDATED\" means the generated pytest tests -- written by the "
+    "same AI that wrote the refactor -- pass against the refactored code. It does **not** prove "
+    "the refactor is behaviorally identical to the original for every input: nothing in this "
+    "pipeline runs the original and refactored code side-by-side to diff their outputs. "
+    "Structural rewrites (e.g. replacing a loop, changing how a variable's state carries across "
+    "iterations) can silently change behavior while still passing self-consistent, AI-written "
+    "tests. Review non-trivial control-flow changes manually before relying on `--apply`."
+)
+
+
 _STAGE_LABELS = {
     "refactor": "Refactor Generation",
     "test_generation": "Test Generation",
@@ -253,8 +264,10 @@ def _render_result_section(res: dict) -> str:
 
     code_heading = "Final Refactored Code" if res.get("validated", False) else "Proposed Refactored Code (unvalidated -- review before use)"
 
-    return "\n".join([
-        f"## Unified Refactor ({status})",
+    sections = [f"## Unified Refactor ({status})"]
+    if res.get("validated", False):
+        sections.append(f"{VALIDATION_CAVEAT}\n")
+    sections.extend([
         f"### Agent Execution\n```\n{build_execution_trace(res)}\n```\n",
         f"**Issues Addressed ({len(smells)}):**\n{issues_list}\n",
         f"### AST Metrics\n{build_metrics_table(res)}\n",
@@ -263,6 +276,7 @@ def _render_result_section(res: dict) -> str:
         f"### {code_heading}\n```python\n{refactor.refactored_code}\n```\n",
         f"### Generated Test\n```python\n{test.pytest_code}\n```\n---\n",
     ])
+    return "\n".join(sections)
 
 
 def build_syntax_error_report(syntax_issue) -> str:

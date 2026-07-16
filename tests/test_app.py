@@ -36,6 +36,17 @@ def test_render_result_labels_code_as_unvalidated_when_not_validated():
     assert "unvalidated" in rendered.lower()
 
 
+def test_render_result_includes_validation_caveat_when_validated():
+    rendered = app._render_result(SAMPLE_RESULT)
+    assert "Note on validation" in rendered
+
+
+def test_render_result_omits_validation_caveat_when_not_validated():
+    result = dict(SAMPLE_RESULT, validated=False)
+    rendered = app._render_result(result)
+    assert "Note on validation" not in rendered
+
+
 def test_run_analysis_no_input_returns_warning():
     message, report = app.run_analysis("", [], False, "{}")
     assert "paste some code" in message.lower()

@@ -75,6 +75,15 @@ The system is designed with a modular architecture, divided into three primary p
     -   **Mechanism:** Dynamically writes the refactored code and tests to an isolated environment (initially a temporary directory, later potentially a Docker container).
     -   **Validation:** Runs `pytest` against the generated files and captures the results.
     -   **Feedback:** Provides test results back to the Agent Orchestration Layer to inform further refactoring attempts if tests fail.
+    -   **Known limitation — self-consistency, not proven equivalence:** "✅ VALIDATED" means the
+        Test Agent's tests (written against the *refactored* code) pass in the sandbox and the
+        Reviewer Agent approved the diff. Nothing in the pipeline runs the original and refactored
+        code side-by-side to diff their actual outputs, so a structural rewrite can silently change
+        behavior (e.g. replacing a loop whose control variable persisted across outer iterations
+        with one that resets it every iteration) while still passing tests that were themselves
+        derived from the new behavior. Every validated report includes `agents/main.py`'s
+        `VALIDATION_CAVEAT` making this explicit — review non-trivial control-flow rewrites
+        manually before relying on `--apply`. See section 7 for a real differential-testing fix.
 
 ## 3. Technology Stack & Dependencies
 
@@ -234,5 +243,13 @@ These were listed as "V2 & Beyond" ideas but are implemented in v1:
 -   **Deeper CI/CD Integration:** Running the refactor bot itself (not just its test suite) as a PR check.
 -   **Additional LLM Backends:** Google Gemini / Anthropic Claude are not wired up (OpenAI, Ollama, and Groq
     only).
+-   **Differential/Behavioral-Equivalence Testing:** Observed live -- a refactor that replaced a `while`
+    loop (whose control variable persisted across outer-loop iterations) with a `for` loop over a fresh
+    range (recomputed every outer iteration) changed the total number of times a branch executed for
+    `b > 1`, yet still passed the Test Agent's own tests and Reviewer approval, because nothing actually
+    runs the original and refactored code against matching inputs and diffs the outputs. Real fix would need
+    to run both versions against generated/random inputs and compare results -- nontrivial when the code
+    under test has side effects (`os.system`, `subprocess`, file I/O). Until then, this is documented as a
+    known validation-methodology limitation (see section 3), not silently assumed away.
 
 ---

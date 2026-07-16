@@ -157,6 +157,19 @@ def test_report_labels_code_as_unvalidated_when_not_validated():
     assert "def f(*args):\n    pass" in report
 
 
+# --- Validation caveat ---
+
+def test_report_includes_validation_caveat_when_validated():
+    report = build_markdown_report([_make_result(validated=True)])
+    assert "Note on validation" in report
+
+
+def test_report_omits_validation_caveat_when_not_validated():
+    """No point caveating a claim ('VALIDATED') that isn't even being made."""
+    report = build_markdown_report([_make_result(validated=False)])
+    assert "Note on validation" not in report
+
+
 # --- build_syntax_error_report ---
 
 def test_syntax_error_report_includes_line_column_and_message():
