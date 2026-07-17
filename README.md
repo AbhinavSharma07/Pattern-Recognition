@@ -13,6 +13,8 @@ pinned: false
   
 An autonomous, end-to-end Python code analysis and refactoring tool that uses Abstract Syntax Trees (AST) and a multi-agent LLM system to detect, refactor, and validate code improvements.
 
+![Example run: 8 code smells detected, refactored, and validated end-to-end](assets/demo.png)
+
 ---
 
 ## Key Features
@@ -150,3 +152,7 @@ counts, etc.) and a step-by-step execution trace of what each agent did.
 pip install -r requirements.txt
 pytest -v
 ```
+
+## License
+
+MIT — see [LICENSE](LICENSE).
