@@ -47,6 +47,20 @@ def test_render_result_omits_validation_caveat_when_not_validated():
     assert "Note on validation" not in rendered
 
 
+def test_render_result_shows_reviewer_feedback_when_present():
+    result = dict(SAMPLE_RESULT, validated=False, rejection_feedback="Drops the original error handling.")
+    rendered = app._render_result(result)
+
+    assert "Reviewer Feedback" in rendered
+    assert "Drops the original error handling." in rendered
+
+
+def test_render_result_omits_reviewer_feedback_section_when_absent():
+    result = dict(SAMPLE_RESULT, validated=False)
+    rendered = app._render_result(result)
+    assert "Reviewer Feedback" not in rendered
+
+
 def test_run_analysis_no_input_returns_warning():
     message, report = app.run_analysis("", [], False, "{}")
     assert "paste some code" in message.lower()

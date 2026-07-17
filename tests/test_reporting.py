@@ -170,6 +170,21 @@ def test_report_omits_validation_caveat_when_not_validated():
     assert "Note on validation" not in report
 
 
+# --- Reviewer rejection feedback ---
+
+def test_report_shows_reviewer_feedback_when_present():
+    result = dict(_make_result(validated=False), rejection_feedback="Drops the original error handling.")
+    report = build_markdown_report([result])
+
+    assert "Reviewer Feedback" in report
+    assert "Drops the original error handling." in report
+
+
+def test_report_omits_reviewer_feedback_section_when_absent():
+    report = build_markdown_report([_make_result(validated=False)])
+    assert "Reviewer Feedback" not in report
+
+
 # --- build_syntax_error_report ---
 
 def test_syntax_error_report_includes_line_column_and_message():

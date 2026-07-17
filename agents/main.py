@@ -267,8 +267,10 @@ def _render_result_section(res: dict) -> str:
     sections = [f"## Unified Refactor ({status})"]
     if res.get("validated", False):
         sections.append(f"{VALIDATION_CAVEAT}\n")
+    sections.append(f"### Agent Execution\n```\n{build_execution_trace(res)}\n```\n")
+    if res.get("rejection_feedback"):
+        sections.append(f"### Reviewer Feedback (why this was rejected)\n{res['rejection_feedback']}\n")
     sections.extend([
-        f"### Agent Execution\n```\n{build_execution_trace(res)}\n```\n",
         f"**Issues Addressed ({len(smells)}):**\n{issues_list}\n",
         f"### AST Metrics\n{build_metrics_table(res)}\n",
         f"### Explanation\n{refactor.explanation}\n",

@@ -63,8 +63,10 @@ def _render_result(res: dict) -> str:
     ]
     if res.get("validated", False):
         sections.append(f"{VALIDATION_CAVEAT}\n")
+    sections.append(f"**Agent Execution**\n```\n{build_execution_trace(res)}\n```\n")
+    if res.get("rejection_feedback"):
+        sections.append(f"**Reviewer Feedback (why this was rejected):** {res['rejection_feedback']}\n")
     sections += [
-        f"**Agent Execution**\n```\n{build_execution_trace(res)}\n```\n",
         f"**Issues Addressed:**\n{issues_list}\n",
         f"**AST Metrics**\n{build_metrics_table(res)}\n",
         f"**AI Explanation:** {refactor.explanation}\n",

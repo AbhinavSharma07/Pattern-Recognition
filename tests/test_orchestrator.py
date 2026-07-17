@@ -222,6 +222,40 @@ def test_process_codebase_reviewer_rejection_has_no_error_kind(tmp_path, monkeyp
     assert results[0]["error_kind"] is None
 
 
+def test_process_codebase_surfaces_reviewer_rejection_feedback(tmp_path, monkeypatch):
+    """The Reviewer's actual critique must reach the report, not just the retry-loop's
+    internal state -- it's discarded otherwise once retries run out."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(orchestrator, "run_refactor_agent", _refactor_stub)
+    monkeypatch.setattr(orchestrator, "run_test_agent", lambda proposal, config: SAMPLE_TEST)
+    monkeypatch.setattr(
+        orchestrator, "run_reviewer_agent",
+        lambda source_code, smells, refactor, test, config: ReviewDecision(
+            approved=False, feedback="The refactor drops the original error handling."
+        ),
+    )
+
+    results = orchestrator.process_codebase(SOURCE_WITH_SMELL, "bad.py", config={})
+
+    assert results[0]["rejection_feedback"] == "The refactor drops the original error handling."
+
+
+def test_process_codebase_omits_rejection_feedback_when_not_a_rejection(tmp_path, monkeypatch):
+    """A sandbox test failure isn't a reviewer rejection -- there's no rejection feedback to show."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(orchestrator, "run_refactor_agent", _refactor_stub)
+    monkeypatch.setattr(orchestrator, "run_test_agent", lambda proposal, config: SAMPLE_TEST)
+    monkeypatch.setattr(orchestrator, "run_reviewer_agent", _reviewer_approve_stub)
+    monkeypatch.setattr(
+        orchestrator, "execute_tests",
+        lambda refactored_code, test_code, use_docker=False: {"success": False, "output": "AssertionError"},
+    )
+
+    results = orchestrator.process_codebase(SOURCE_WITH_SMELL, "bad.py", config={})
+
+    assert results[0].get("rejection_feedback") is None
+
+
 def test_process_codebase_clears_stale_test_after_later_refactor_failure(tmp_path, monkeypatch):
     """A stale test_proposal from an earlier retry must not leak into a later refactor failure."""
     monkeypatch.chdir(tmp_path)

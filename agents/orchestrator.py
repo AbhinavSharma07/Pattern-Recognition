@@ -31,6 +31,8 @@ STAGE_SANDBOX = "sandbox"
 ERROR_KIND_API = "api_error"
 ERROR_KIND_GENERATION = "generation_error"
 
+REVIEWER_FEEDBACK_PREFIX = "REVIEWER FEEDBACK: "
+
 _API_ERROR_USER_MESSAGE = (
     "The refactoring process could not be completed because the AI service is "
     "temporarily unavailable or has reached its usage limit.\n\n"
@@ -151,7 +153,7 @@ def review_proposal_node(state: AgentGraphState) -> AgentGraphState:
         return state
     if not review.approved:
         print(f"[-] Reviewer REJECTED: {review.feedback}. Retrying...")
-        state.feedback = f"REVIEWER FEEDBACK: {review.feedback}"
+        state.feedback = f"{REVIEWER_FEEDBACK_PREFIX}{review.feedback}"
         state.error_kind = None  # a legitimate rejection, not a system/API error
         state.retries_left -= 1
     else:
@@ -333,9 +335,17 @@ def process_codebase(
             target_function_name=file_name,
             pytest_code="# No test could be generated: the agent pipeline failed before reaching this step.",
         )
+        # A genuine reviewer rejection (not an API error on the reviewer call itself) carries
+        # real, useful feedback -- surface it distinctly rather than letting it disappear once
+        # retries run out. refactor.explanation above is the Refactor Agent's own description
+        # of its fix, not the Reviewer's critique of it -- the two are not the same thing.
+        rejection_feedback = None
+        if final_state.get("stage") == STAGE_REVIEW and error_kind is None and error_note.startswith(REVIEWER_FEEDBACK_PREFIX):
+            rejection_feedback = error_note[len(REVIEWER_FEEDBACK_PREFIX):]
         result_data = {
             "smells": smells, "refactor": refactor_proposal, "test": test_proposal, "validated": False,
             "stage": final_state.get("stage"), "error_kind": final_state.get("error_kind"),
+            "rejection_feedback": rejection_feedback,
         }
 
     result_data["source_code"] = source_code
